@@ -1,0 +1,58 @@
+cabal-version:   3.0
+name:            yosys-bb
+version:         0.1.0.0
+license:         BSD-3-Clause
+license-file:    LICENSE
+maintainer:      pokatilov0802@gmail.com
+author:          Aleksandr Pokatilov
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+library
+    exposed-modules:
+        MyLib
+        Graph
+        NodeGen
+        Memory
+        MyLib.Json
+        Bit
+
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base ^>=4.19.0.0,
+        containers,
+        aeson,
+        text,
+        bytestring,
+        array,
+        extra,
+        scientific,
+        template-haskell,
+        clash-lib
+
+executable yosys-bb
+    main-is:          Main.hs
+    hs-source-dirs:   exe
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base ^>=4.19.0.0,
+        containers,
+        temporary,
+        process,
+        split,
+        yosys-bb
+
+test-suite yosys-bb-test
+    type:             exitcode-stdio-1.0
+    main-is:          Main.hs
+    hs-source-dirs:   test
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base ^>=4.19.0.0,
+        tasty,
+        tasty-hunit,
+        yosys-bb
