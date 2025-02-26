@@ -32,6 +32,7 @@ data Port = Port
 data Net = Net
   { name :: String,
     nBits :: [Int],
+    attributes :: AttrMap,
     offset :: Int,
     upto :: Bool,
     signed :: Bool
@@ -116,6 +117,7 @@ ofJson (J.TopLevel mods) = map namedModule $ Map.assocs mods
         { name = name,
           nBits = bits,
           offset = fromMaybe 0 offset,
+          attributes = attributes,
           upto = fromMaybe False upto,
           signed = fromMaybe False signed
         }

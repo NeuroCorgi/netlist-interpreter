@@ -231,8 +231,8 @@ ofCell Cell {..} =
         (tribuf (BitVector a) (BitVector en) (BitVector y), wires a ++ wires en)
     "$adff" -> do
       width <- num =<< lookup' "WIDTH" parameters
-      clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" parameters
-      rstPol<- (validateWidth 1 . bitString) =<< lookup' "ARST_POLARITY" parameters
+      clkPol <- bitString <$> lookup' "CLK_POLARITY" parameters
+      rstPol<- bitString <$> lookup' "ARST_POLARITY" parameters
       rstVal <- validateWidth width . bitString =<< lookup' "ARST_VALUE" parameters
       clk <- validateWidth 1 =<< lookup' "CLK" ins
       rst <- validateWidth 1 =<< lookup' "ARST" ins
@@ -242,9 +242,9 @@ ofCell Cell {..} =
         (adff (head clkPol) (head rstPol) (bitVector rstVal) (BitVector clk) (BitVector rst) (BitVector d) (BitVector q), wires clk ++ wires rst ++ wires d)
     "$adffe" -> do
       width <- num =<< lookup' "WIDTH" parameters
-      clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" parameters
-      enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" parameters
-      rstPol<- (validateWidth 1 . bitString) =<< lookup' "ARST_POLARITY" parameters
+      clkPol <- bitString <$> lookup' "CLK_POLARITY" parameters
+      enPol <- bitString <$> lookup' "EN_POLARITY" parameters
+      rstPol<- bitString <$> lookup' "ARST_POLARITY" parameters
       rstVal <- validateWidth width . bitString =<< lookup' "ARST_VALUE" parameters
       clk <- validateWidth 1 =<< lookup' "CLK" ins
       en <- validateWidth 1 =<< lookup' "EN" ins
@@ -365,7 +365,7 @@ data Design = Design
   , ins :: [(String, BitVector)]
   , outs :: [(String, BitVector)]
   , memory :: Memory
-  , update_map :: Map Int Int
+  , update_map :: Map Int [Int]
   }
 
 instance Show Design where
@@ -375,18 +375,20 @@ instance Show Design where
 compile :: Module -> Either String Design
 compile Module {..} = do
   nodes <- mapM ofCell cells
-  let updateMap = Map.fromList . concatMap (\(i, (_, nodeIns)) -> map (, i) nodeIns) $ zip [0..] nodes
+  let updateMap = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, (_, nodeIns)) -> map (, i) nodeIns) $ zip [0..] nodes
   return Design
     { nodes = nodes
     , ins = ins
     , outs = outs
-    , memory = empty n_bits
+    , memory = foldl (//) (empty n_bits) inits
     , update_map = updateMap
     }
   where
     n_bits = uncurry max . (pb *** nb) $ (ports, netnames)
     pb = maximum . map (maximum . pBits)
     nb = maximum . map (maximum . nBits)
+
+    inits = mapMaybe (\Net{..} -> (bitView nBits,) . bitString <$> Map.lookup "init" attributes) netnames
 
     ins = map (pName &&& (bitView . pBits)) $ filter ((== Input) . direction) ports
     outs = map (pName &&& (bitView . pBits)) $ filter ((== Output) . direction) ports
@@ -399,7 +401,7 @@ step d@Design {memory, nodes, update_map} = d{memory=go memory}
     -- The first update block should persist to allow to detect *all* edges
       where
         -- runningMem = oldMem{updated=ups}
-        influencedNodesInds = traceShowId (nub $ mapMaybe ((`Map.lookup` update_map) . fst) update)
+        influencedNodesInds = traceShowId (nub . concat $ mapMaybe ((`Map.lookup` update_map) . fst) update)
         influencedNodes = map (fst . (nodes !!)) influencedNodesInds
         endMem@Memory{updated=_:rest} = foldl (\mem node -> node mem) oldMem influencedNodes
         newMem = endMem{updated=rest}

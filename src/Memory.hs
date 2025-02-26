@@ -5,6 +5,7 @@
 module Memory
   ( Memory (..),
     empty,
+    clearUpdated,
     BitVector(..),
     BVE(..),
     Bit,
@@ -143,9 +144,12 @@ data Memory =
 
 empty :: Int -> Memory
 empty n = Memory
-  { memory = replicate (n + 1) X
+  { memory = replicate (n + 1) Z
   , updated = []
   }
+
+clearUpdated :: Memory -> Memory
+clearUpdated mem = mem{updated=[]}
 
 (//) :: Memory -> (BitVector, [Bit]) -> Memory
 (//) m@(Memory {..}) (BitVector bv, bits) =
@@ -276,10 +280,11 @@ type BinaryBVFun = BitVector -> BitVector -> BitVector -> Memory -> Memory
 
 binaryFunc :: ([Bit] -> [Bit] -> [Bit]) -> BinaryBVFun
 binaryFunc f a b y mem =
-  let to = extend (bvLength y)
-      ab = to $ mem ! a
-      bb = to $ mem ! b
-  in mem // (y, traceShowId (to $ ab `f` bb))
+  let toA = extend (max (bvLength a) (bvLength b))
+      toR = extend (bvLength y)
+      ab = toA $ mem ! a
+      bb = toA $ mem ! b
+  in mem // (y, traceShowId (toR $ ab `f` bb))
 
 math :: (Int -> Int -> Maybe Int) -> ([Bit] -> [Bit] -> [Bit])
 math f a b = fromMaybe [X] $ do
@@ -457,14 +462,14 @@ demux a s y mem =
         | otherwise = emptySegment
   in case toInt sb of
        Just i -> mem // (y, concatMap (segment i) [0..(2 ^ length sb)])
-       Nothing -> mem // (y, replicate (length ab * (2 ^ length sb)) X)
+       Nothing -> mem // (y, replicate (length ab * (2 ^ length sb)) Z)
 
 mux :: BitVector -> BitVector -> BitVector -> BitVector -> Memory -> Memory
 mux a b s y mem =
   let ab = mem ! a
       bb = mem ! b
       [ s' ] = mem ! s
-      res = case s' of H -> ab; L -> bb; _ -> replicate (length ab) X
+      res = case s' of H -> bb; L -> ab; _ -> replicate (length ab) Z
   in mem // (y, res)
 
 tribuf :: BitVector -> BitVector -> BitVector -> Memory -> Memory

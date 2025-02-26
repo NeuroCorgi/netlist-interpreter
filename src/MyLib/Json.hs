@@ -58,6 +58,7 @@ $( deriveFromJSON defaultOptions 'Port )
 data Net = Net
   { bits :: [Int]
   , offset :: Maybe Int
+  , attributes :: AttrMap
   , upto :: Maybe Bool
   , signed :: Maybe Bool
   }
