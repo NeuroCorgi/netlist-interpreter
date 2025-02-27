@@ -22,7 +22,7 @@ data Direction = Input | Output | InOut
 data Port = Port
   { pName :: String,
     direction :: Direction,
-    pBits :: [Int],
+    pBits :: [BVE],
     offset :: Int,
     upto :: Bool,
     signed :: Bool
@@ -30,22 +30,20 @@ data Port = Port
   deriving (Show)
 
 data Net = Net
-  { name :: String,
-    nBits :: [Int],
-    attributes :: AttrMap,
-    offset :: Int,
-    upto :: Bool,
-    signed :: Bool
+  { nName :: String,
+    nBits :: [BVE],
+    nAttributes :: AttrMap,
+    nSigned :: Bool
   }
   deriving (Show)
 
 data Cell = Cell
-  { name :: String,
-    typ :: String,
-    attributes :: AttrMap,
-    parameters :: Map String String,
-    port_directions :: Map String Direction,
-    connections :: Map String [BVE]
+  { cName :: String,
+    cType :: String,
+    cAttributes :: AttrMap,
+    cParameters :: Map String String,
+    cPortDirections :: Map String Direction,
+    cConnections :: Map String [BVE]
   }
   deriving (Show)
 
@@ -85,23 +83,22 @@ ofJson (J.TopLevel mods) = map namedModule $ Map.assocs mods
       Port
         { pName = name,
           direction = (\case J.Input -> Input; J.Output -> Output; J.InOut -> InOut) direction,
-          pBits = bits,
+          pBits = map bitWire bits,
           offset = fromMaybe 0 offset,
           upto = fromMaybe False upto,
-          signed = fromMaybe False signed
+          -- signed = fromMaybe False signed
+          signed = False
         }
 
-    bitWire (J.Wire i) = W i
-    bitWire (J.Bit c) = B (bit c)
     namedCell (name, J.Cell {..}) =
       Cell
-        { name = name,
-          attributes = attributes,
-          typ = typ,
-          parameters = parameters,
-          port_directions = Map.map (\case J.Input -> Input; J.Output -> Output; J.InOut -> InOut) port_directions,
-          connections = Map.map (map bitWire) connections
-        }
+      { cName = name
+      , cAttributes = attributes
+      , cType = typ
+      , cParameters = parameters
+      , cPortDirections = Map.map (\case J.Input -> Input; J.Output -> Output; J.InOut -> InOut) port_directions
+      , cConnections = Map.map (map bitWire) connections
+      }
 
     -- namedMemo (name, J.Memory{..}) =
     --   Memory
@@ -114,13 +111,14 @@ ofJson (J.TopLevel mods) = map namedModule $ Map.assocs mods
 
     namedNetName (name, J.Net {..}) =
       Net
-        { name = name,
-          nBits = bits,
-          offset = fromMaybe 0 offset,
-          attributes = attributes,
-          upto = fromMaybe False upto,
-          signed = fromMaybe False signed
+        { nName = name,
+          nBits = map bitWire bits,
+          nAttributes = attributes,
+          nSigned = Just 1 == signed
         }
+
+    bitWire (J.Wire i) = W i
+    bitWire (J.Bit c) = B (bit c)
 
 mods :: Text -> Either String [Module]
 mods i = ofJson <$> J.parseModule i

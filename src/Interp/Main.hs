@@ -13,6 +13,7 @@ import System.Environment
 
 import Control.Monad (foldM)
 import Data.List.Extra (trim)
+import Data.List.NonEmpty (nonEmpty)
 import Data.Map (fromList, empty)
 import Data.String (fromString)
 
@@ -22,6 +23,9 @@ import qualified Graph as G
 
 liftEither :: MonadFail m => Either String a -> m a
 liftEither = either fail return
+
+liftMaybe :: MonadFail m => Maybe a -> m a
+liftMaybe = maybe (fail "nothing") return
 
 sanitize :: FilePath -> FilePath
 sanitize ('/' : rest) = '.' : sanitize rest
@@ -44,7 +48,10 @@ readDesign filePath = do
     fromString <$> withFile path ReadMode hGetContents'
   hPutStr stderr "Design json file written to: "
   hPutStrLn stderr path
-  liftEither $ (G.compile . head) =<< MyLib.mods jsonDesign
+  modules <- liftEither $ MyLib.mods jsonDesign
+  case nonEmpty modules of
+    Just modules -> liftEither $ G.compile modules
+    Nothing -> fail "empty design"
 
 readCommands :: FilePath -> IO [Command]
 readCommands filePath =
