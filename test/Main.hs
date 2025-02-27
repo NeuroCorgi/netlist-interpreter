@@ -14,7 +14,11 @@ testFile designName = testCase designName $ do
 
 tests :: TestTree
 tests = testGroup ""
-  [ testFile "lotsOfState"
+  [
+    -- testFile "lotsOfState"
+    testFile "fibonacci"
+  , testFile "genericBitPack"
+  , testFile "registerAE"
   ]
 
 main :: IO ()

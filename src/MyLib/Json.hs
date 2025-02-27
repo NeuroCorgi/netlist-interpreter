@@ -1,4 +1,3 @@
-
 {-# LANGUAGE TemplateHaskell       #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings     #-}
@@ -34,7 +33,20 @@ import Control.Applicative (empty)
 type Attribute = String
 type AttrMap = Map String Attribute
 
+data Q = Wire Int | Bit Char
+
 data Direction = Input | Output | InOut
+
+instance FromJSON Q where
+  parseJSON (String b) =
+    case unpack b of
+      [b'] -> return (Bit b')
+      _ -> empty
+  parseJSON (Number n) =
+    case toBoundedInteger n of
+      Just n' -> return (Wire n')
+      Nothing -> empty
+  parseJSON _ = empty
 
 instance FromJSON Direction where
   parseJSON (String dir) =
@@ -48,34 +60,21 @@ instance FromJSON Direction where
 
 data Port = Port
   { direction :: Direction
-  , bits :: [Int]
+  , bits :: [Q]
   , offset :: Maybe Int
   , upto :: Maybe Bool
-  , signed :: Maybe Bool
+  , signed :: Maybe Int
   }
 $( deriveFromJSON defaultOptions 'Port )
 
 data Net = Net
-  { bits :: [Int]
+  { bits :: [Q]
   , offset :: Maybe Int
   , attributes :: AttrMap
   , upto :: Maybe Bool
-  , signed :: Maybe Bool
+  , signed :: Maybe Int
   }
 $( deriveFromJSON defaultOptions 'Net )
-
-data Q = Wire Int | Bit Char
-
-instance FromJSON Q where
-  parseJSON (String b) =
-    case unpack b of
-      [b'] -> return (Bit b')
-      _ -> empty
-  parseJSON (Number n) =
-    case toBoundedInteger n of
-      Just n' -> return (Wire n')
-      Nothing -> empty
-  parseJSON _ = empty
 
 data Cell = Cell
   { typ             :: String

@@ -22,7 +22,7 @@ spaces1 :: ReadP ()
 spaces1 = skipMany1 space
 
 word :: ReadP String
-word = many1 (satisfy isAlphaNum)
+word = many1 (satisfy (not . isSpace))
 
 num :: ReadP Int
 num = s2i <$> many1 (satisfy isNumber)

@@ -50,6 +50,7 @@ module Memory
     , bwmux
     , demux
     , mux
+    , pmux
     , tribuf
 
     , adff
@@ -67,13 +68,14 @@ module Memory
 where
 
 import Prelude hiding (not, or, and, all)
-import Data.List (foldl1', find)
+import Data.List (foldl1', find, sortBy)
 import Data.Foldable (foldrM)
 import Data.Maybe (fromMaybe, mapMaybe, isJust, catMaybes)
 
 import Debug.Trace (traceShow, traceShowId)
 
 import Bit
+import Data.Function (on)
 
 not :: Bit -> Bit
 not = complement
@@ -153,7 +155,7 @@ clearUpdated mem = mem{updated=[]}
 
 (//) :: Memory -> (BitVector, [Bit]) -> Memory
 (//) m@(Memory {..}) (BitVector bv, bits) =
-  let patch = catMaybes $ zipWith (\case (W i) -> \j -> Just (i, j); (B _) -> const Nothing) bv bits
+  let patch = sortBy (compare `on` fst) . catMaybes $ zipWith (\case (W i) -> \j -> Just (i, j); (B _) -> const Nothing) bv bits
       memory' = go patch (zip [0,1..] memory)
       changed = mapMaybe (\i -> (i ,) <$> maybeEdge (memory !! i) (memory' !! i)) $ wires bv
   in m{ memory = memory'
@@ -471,6 +473,31 @@ mux a b s y mem =
       [ s' ] = mem ! s
       res = case s' of H -> bb; L -> ab; _ -> replicate (length ab) Z
   in mem // (y, res)
+
+pmux :: BitVector -> BitVector -> BitVector -> BitVector -> Memory -> Memory
+pmux a b s y mem =
+  let ab = mem ! a
+      bb = mem ! b
+      sb = mem ! s
+   in case orReduce sb of
+        -- checks if there is no high bits
+        [ L ] -> mem // (y, ab)
+        -- checks if there are undefined bits
+        [ X ] -> mem // (y, replicate (length ab) X)
+        _ ->
+          case index sb H of
+            Just i -> mem // (y, take (bvLength y) $ drop (length ab * i) bb)
+            Nothing -> mem // (y, replicate (length ab) X)
+  where
+    -- Both cases of not founding an element and founding it more than once are resulting in `Nothing`
+    index l e = foldl (folder e) Nothing (zip [0,1..] l)
+    folder e Nothing (i, a)
+      | e == a = Just i
+      | otherwise = Nothing
+    folder e res (i, a)
+      | e == a = Nothing
+      | otherwise = res
+      
 
 tribuf :: BitVector -> BitVector -> BitVector -> Memory -> Memory
 tribuf a en y mem =
