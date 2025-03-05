@@ -14,6 +14,7 @@ module Memory
     BVE(..),
     Bit,
     bit,
+    stageUpdates,
     -- mkBitVector,
     -- bitView,
     -- bitVector,
@@ -197,16 +198,22 @@ instance MemoryLike IntMap where
 data (MemoryLike a) => Memory a =
   Memory
   { mMemory :: a Bit
+  , mUpMemory :: a Bit
   , mUpdated :: [[(Int, Edge)]]
   }
 
-deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
+stageUpdates :: (MemoryLike a) => Memory a -> Memory a
+stageUpdates unstaged@Memory{..} = unstaged{mMemory=mUpMemory, mUpdated=tail' mUpdated}
+  where
+    tail' [] = []
+    tail' (_:r) = r
 
--- instance (Show (c Int)) => Show (Memory c)
+deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
 empty :: Int -> Memory []
 empty n = Memory
   { mMemory = replicate (n + 1) Z
+  , mUpMemory = replicate (n + 1) Z
   , mUpdated = []
   }
 
@@ -216,14 +223,12 @@ clearUpdated mem = mem{mUpdated=[]}
 (//) :: (MemoryLike a) => Memory a -> (BitVector, [Bit]) -> Memory a
 (//) m@(Memory {..}) (BitVector bv _, bits) =
   let patch = sortBy (compare `on` fst) . catMaybes $ zipWith (\case (W i) -> \j -> Just (i, j); (B _) -> const Nothing) bv bits
-      memory' = update patch mMemory
+      memory' = update patch mUpMemory
       changed = mapMaybe (\i -> (i ,) <$> maybeEdge (mMemory !! i) (memory' !! i)) $ wires bv
-  in m{ mMemory = memory'
+  in m{ mUpMemory = memory'
       , mUpdated = mUpdated ++ [changed]
       }
   where
-
-
     maybeEdge :: Bit -> Bit -> Maybe Edge
     maybeEdge H H = Nothing
     maybeEdge _ H = Just Rising
