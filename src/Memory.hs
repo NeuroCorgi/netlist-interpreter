@@ -1,6 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE MagicHash #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Memory
   ( Memory (..),
@@ -74,9 +78,13 @@ module Memory
 where
 
 import Prelude hiding (not, or, and, all, (!!))
-import Data.List (foldl1', find, sortBy)
-import qualified Data.List as L
-import Data.Foldable (foldrM)
+-- import Data.List (foldl1', find, sortBy)
+-- import qualified Data.List as L
+
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+-- import qualified Data.Array.Utils as AU
+
 import Data.Maybe (fromMaybe, mapMaybe, isJust, catMaybes)
 
 import Data.IntMap (IntMap)
@@ -84,28 +92,33 @@ import qualified Data.IntMap as IM
 
 import Debug.Trace (traceShow, traceShowId)
 
-import Bit
 import Data.Function (on)
+import Data.Foldable (foldrM, find)
+
+import GHC.Base hiding (not, empty)
+import GHC.Integer.Logarithms
+
+import Bit
+
+pattern SA :: a -> V.Vector a
+pattern SA a <- (\v -> V.head v -> a)
+  where SA a = V.singleton a
 
 not :: Bit -> Bit
 not = complement
 
-or :: [Bit] -> Bit
-or = foldl1' (.|.)
+type BitA = Vector Bit
 
-and :: [Bit] -> Bit
-and = foldl1' (.&.)
+or :: BitA -> Bit
+or = foldl1 (.|.)
 
-all :: (a -> Bit) -> [a] -> Bit
-all f = and . map f
+and :: BitA -> Bit
+and = foldl1 (.&.)
 
--- zipLongest :: [a] -> [a] -> a -> [(a, a)]
--- zipLongest (a : ra) (b : rb) d = (a, b) : zipLongest ra rb d
--- zipLongest (a : ra) [] d = (a, d) : zipLongest ra [] d
--- zipLongest [] (b : rb) d = (d, b) : zipLongest [] rb d
--- zipLongest [] [] _ = []
+all :: (a -> Bit) -> Vector a -> Bit
+all f = and . fmap f
 
-toInt :: [Bit] -> Maybe Integer
+toInt :: BitA -> Maybe Integer
 toInt = foldrM (\d a -> (+) <$> toD d <*> return (a * 2)) 0
   where
     toD :: Bit -> Maybe Integer
@@ -113,13 +126,31 @@ toInt = foldrM (\d a -> (+) <$> toD d <*> return (a * 2)) 0
     toD L = Just 0
     toD _ = Nothing
 
-fromInt :: Integer -> [Bit]
-fromInt 0 = []
+fromInt :: Integer -> BitA
 fromInt n
-  | n < 0     = neg (fromInt (-n) ++ [L])
-  | even n    = L : fromInt n'
-  | otherwise = H : fromInt n'
-  where n' = n `div` 2
+  | n < 0 = neg $ V.fromList (bits (-n) ++ [L])
+  | otherwise = V.fromList (bits n)
+  where
+    -- bits n =
+    bits 0 = []
+    bits n
+      | even n    = L : bits n'
+      | otherwise = H : bits n'
+      where n' = n `div` 2
+
+clog2 :: Integer -> Int
+clog2 x = fromMaybe 0 $ clogBase 2 x
+
+clogBase :: Integer -> Integer -> Maybe Int
+clogBase x y | x > 1 && y > 0 =
+  case y of
+    1 -> Just 0
+    _ -> let z1 = integerLogBase# x y
+             z2 = integerLogBase# x (y-1)
+         in  if isTrue# (z1 ==# z2)
+                then Just (I# (z1 +# 1#))
+                else Just (I# z1)
+clogBase _ _ = Nothing
 
 data BVE = W Int | B Bit deriving Show
 data BitVector = BitVector [BVE] Bool
@@ -133,9 +164,6 @@ signed (BitVector _ sign) = sign
 
 class ToBitVector a where
   toBitVector :: a -> BitVector
-
--- mkBitVector :: [BVE] -> Bool -> BitVector
--- mkBitVector = BitVector
 
 instance ToBitVector ([BVE], Bool) where
   toBitVector = uncurry BitVector
@@ -152,6 +180,9 @@ instance ToBitVector [Int] where
 instance ToBitVector [Bit] where
   toBitVector p = BitVector (map B p) False
 
+instance ToBitVector (Vector Bit) where
+  toBitVector p = BitVector (map B $ V.toList p) False
+
 -- bitView :: [Int] -> BitVector
 -- bitView p = BitVector (map W p) False
 --
@@ -165,8 +196,9 @@ bit 'z' = Z
 bit 'x' = X
 bit  _  = undefined
 
-bitString :: String -> [Bit]
-bitString = reverse . map bit
+bitString :: String -> BitA
+bitString s = V.fromList bits
+  where bits = reverse $ map bit s
 
 data Edge = Rising | Falling deriving Show
 
@@ -177,15 +209,9 @@ class MemoryLike c where
   (!!) :: c e -> Int -> e
   update :: [(Int, e)] -> c e -> c e
 
-instance MemoryLike [] where
-  (!!) = (L.!!)
-  update path mem = go path (zip [0,1..] mem)
-    where
-      go b@((i, e) : r) l@((j, n) : t)
-        | i < j = go r l
-        | i == j = e : go r t
-        | i > j = n : go b t
-      go _ l = map snd l
+instance MemoryLike Vector where
+  (!!) = (V.!)
+  update patch mem = mem V.// patch
 
 instance MemoryLike IntMap where
   (!!) = (IM.!)
@@ -201,26 +227,24 @@ deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
 -- instance (Show (c Int)) => Show (Memory c)
 
-empty :: Int -> Memory []
+empty :: Int -> Memory Vector
 empty n = Memory
-  { mMemory = replicate (n + 1) Z
+  { mMemory = V.replicate (n + 1) Z
   , mUpdated = []
   }
 
 clearUpdated :: (MemoryLike a) => Memory a -> Memory a
 clearUpdated mem = mem{mUpdated=[]}
 
-(//) :: (MemoryLike a) => Memory a -> (BitVector, [Bit]) -> Memory a
+(//) :: (MemoryLike a) => Memory a -> (BitVector, BitA) -> Memory a
 (//) m@(Memory {..}) (BitVector bv _, bits) =
-  let patch = sortBy (compare `on` fst) . catMaybes $ zipWith (\case (W i) -> \j -> Just (i, j); (B _) -> const Nothing) bv bits
+  let patch = catMaybes $ zipWith (\case (W i) -> \j -> Just (i, j); (B _) -> const Nothing) bv (V.toList bits)
       memory' = update patch mMemory
       changed = mapMaybe (\i -> (i ,) <$> maybeEdge (mMemory !! i) (memory' !! i)) $ wires bv
   in m{ mMemory = memory'
       , mUpdated = mUpdated ++ [changed]
       }
   where
-
-
     maybeEdge :: Bit -> Bit -> Maybe Edge
     maybeEdge H H = Nothing
     maybeEdge _ H = Just Rising
@@ -228,26 +252,29 @@ clearUpdated mem = mem{mUpdated=[]}
     maybeEdge _ L = Just Falling
     maybeEdge _ _ = Nothing
 
-(!) :: MemoryLike a => Memory a -> BitVector -> [Bit]
-(!) (Memory {mMemory=mem}) (BitVector bv _) = map (\case B b -> b; W w -> mem !! w) bv
+(!) :: MemoryLike a => Memory a -> BitVector -> BitA
+(!) (Memory {mMemory=mem}) (BitVector bv _) = V.fromList $ map (\case B b -> b; W w -> mem !! w) bv
 
 edge :: MemoryLike a => Memory a -> BitVector -> Bool
 edge Memory{mUpdated=[]} _  = False
 edge Memory{mUpdated=update:_} (BitVector bv _) = isJust $ find ((`elem` wbv) . fst) update
   where wbv = wires bv
 
-extendWith :: Bit -> Int -> [Bit] -> [Bit]
+extendWith :: Bit -> Int -> BitA -> BitA
 extendWith d n bits =
   let
-    rest = length bits - n
+    rest = V.length bits - n
   in
     case rest of
       0 -> bits
-      r | r > 0 -> take n bits
-        | True  -> bits ++ replicate (-r) d
+      r | r >= 0     -> V.take n bits
+        | otherwise -> bits V.++ V.replicate (-r) d
 
-extend :: Int -> [Bit] -> [Bit]
+extend :: Int -> BitA -> BitA
 extend = extendWith L
+
+sB :: Bit -> BitA
+sB = V.singleton
 
 ---------------------
 -- Unary functions --
@@ -255,7 +282,7 @@ extend = extendWith L
 
 type UnaryBVFun a = BitVector -> BitVector -> Memory a -> Memory a
 
-unaryFunc :: MemoryLike a => ([Bit] -> [Bit]) -> UnaryBVFun a
+unaryFunc :: MemoryLike a => (BitA -> BitA) -> UnaryBVFun a
 unaryFunc f a y mem =
   let to = extend (bvLength y)
       ab = to $ mem ! a
@@ -265,67 +292,68 @@ unaryFunc f a y mem =
 (!|) :: MemoryLike a => UnaryBVFun a
 (!|) = unaryFunc logicalNot
 
-logicalNot :: [Bit] -> [Bit]
-logicalNot a = [complement (or a)]
+logicalNot :: BitA -> BitA
+logicalNot a = sB $ complement (or a)
 
 -- | Negation
 (-|) :: MemoryLike a => UnaryBVFun a
 (-|) = unaryFunc neg
 
-neg :: [Bit] -> [Bit]
+neg :: BitA -> BitA
 neg = inc . bitwiseNot
 
-inc :: [Bit] -> [Bit]
-inc = reverse . fst . foldl (\(n, c) a -> (a `xor` c : n, a .&. c)) ([], H)
+inc :: BitA -> BitA
+-- inc = V.foldMap (\c a -> (a .&. c, a `xor` c)) H
+inc = V.fromList . reverse . fst . foldl (\(n, c) a -> (a `xor` c : n, a .&. c)) ([], H)
 
 -- | Bitwise Not
 (~|) :: MemoryLike a => UnaryBVFun a
 (~|) = unaryFunc bitwiseNot
 
-bitwiseNot :: [Bit] -> [Bit]
-bitwiseNot = map not
+bitwiseNot :: BitA -> BitA
+bitwiseNot = fmap not
 
 -- | Positive
 (+|) :: MemoryLike a => UnaryBVFun a
 (+|) = unaryFunc pos
 
-pos :: [Bit] -> [Bit]
+pos :: BitA -> BitA
 pos a = a
 
 -- | Reduce And
 (&/|) :: MemoryLike a => UnaryBVFun a
 (&/|) = unaryFunc andReduce
 
-andReduce :: [Bit] -> [Bit]
-andReduce a = [and a]
+andReduce :: BitA -> BitA
+andReduce a = sB $ and a
 
 -- | Boolean Reduce
 (!!|) :: MemoryLike a => UnaryBVFun a
 (!!|) = unaryFunc boolReduce
 
-boolReduce :: [Bit] -> [Bit]
+boolReduce :: BitA -> BitA
 boolReduce = logicalNot . logicalNot
 
 -- | Reduce OR
 (|/|) :: MemoryLike a => UnaryBVFun a
 (|/|) = unaryFunc orReduce
 
-orReduce :: [Bit] -> [Bit]
-orReduce a = [or a]
+orReduce :: BitA -> BitA
+orReduce a = sB $ or a
 
 -- | Reduce XNOR
 (!^/|) :: MemoryLike a => UnaryBVFun a
 (!^/|) = unaryFunc xnorReduce
 
-xnorReduce :: [Bit] -> [Bit]
-xnorReduce a = [all not a .|. and a]
+xnorReduce :: BitA -> BitA
+xnorReduce a = sB (all not a .|. and a)
 
 -- | Reduce XOR
 (^/|) :: MemoryLike a => UnaryBVFun a
 (^/|) = unaryFunc xorReduce
 
-xorReduce :: [Bit] -> [Bit]
-xorReduce a = [foldl1 xor a]
+xorReduce :: BitA -> BitA
+xorReduce a = sB $ foldl1 xor a
 
 ------------------------
 --  Binary functions  --
@@ -333,7 +361,7 @@ xorReduce a = [foldl1 xor a]
 
 type BinaryBVFun a = BitVector -> BitVector -> BitVector -> Memory a -> Memory a
 
-binaryFunc :: MemoryLike a => ([Bit] -> [Bit] -> [Bit]) -> BinaryBVFun a
+binaryFunc :: MemoryLike a => (BitA -> BitA -> BitA) -> BinaryBVFun a
 binaryFunc f a b y mem =
   let toA = extend (max (bvLength a) (bvLength b))
       toR = extend (bvLength y)
@@ -346,7 +374,7 @@ bvToInt mem bv@(BitVector _ sign)
   | sign =
     let bs = mem ! bv
         n = toInt $ extend (bvLength bv - 1) bs
-    in case last bs of
+    in case V.last bs of
         H ->  (\n -> n - (2 ^ (bvLength bv - 1))) <$> n
         L -> n
         _ -> Nothing
@@ -354,22 +382,22 @@ bvToInt mem bv@(BitVector _ sign)
 
 binaryFuncMath :: MemoryLike a => (Integer -> Integer -> Maybe Integer) -> BinaryBVFun a
 binaryFuncMath f a b y mem
-  | signed a && signed b = mem // (y, fromMaybe (replicate (bvLength y) X) $ do
+  | signed a && signed b = mem // (y, fromMaybe (V.replicate (bvLength y) X) $ do
       an <- bvToInt mem a
       bn <- bvToInt mem b
       res <- an `f` bn
       return $ extendWith (if res < 0 then H else L) (bvLength y) $ fromInt res)
-  | otherwise = mem // (y, maybe (replicate (bvLength y) X) (extend (bvLength y)) $ do
+  | otherwise = mem // (y, maybe (V.replicate (bvLength y) X) (extend (bvLength y)) $ do
       an <- toInt (mem ! a)
       bn <- toInt (mem ! b)
       res <- an `f` bn
       return $ fromInt res)
 
-math :: (Integer -> Integer -> Maybe Integer) -> Maybe Integer -> Maybe Integer -> [Bit]
-math f a b = fromMaybe [X] $ do
-  a' <- a
-  b' <- b
-  fromInt <$> a' `f` b'
+-- math :: (Integer -> Integer -> Maybe Integer) -> Maybe Integer -> Maybe Integer -> BitA
+-- math f a b = fromMaybe [X] $ do
+--   a' <- a
+--   b' <- b
+--   fromInt <$> a' `f` b'
 
 -- | Add
 (|+|) :: MemoryLike a => BinaryBVFun a
@@ -379,8 +407,8 @@ math f a b = fromMaybe [X] $ do
 (|&|) :: MemoryLike a => BinaryBVFun a
 (|&|) = binaryFunc and'
 
-and' :: [Bit] -> [Bit] -> [Bit]
-and'= zipWith (.&.)
+and' :: BitA -> BitA -> BitA
+and'= V.zipWith (.&.)
 
 -- | Mul
 
@@ -391,12 +419,12 @@ and'= zipWith (.&.)
 
 (|-|) :: MemoryLike a => BinaryBVFun a
 (|-|) a b y mem
-  | signed a && signed b = mem // (y, fromMaybe (replicate (bvLength y) X) $ do
+  | signed a && signed b = mem // (y, fromMaybe (V.replicate (bvLength y) X) $ do
       an <- bvToInt mem a
       bn <- bvToInt mem b
       let res = an - bn
       return $ extendWith (if res < 0 then H else L) (bvLength y) $ fromInt res)
-  | otherwise = mem // (y, maybe (replicate (bvLength y) X) (extend (bvLength y)) $ do
+  | otherwise = mem // (y, maybe (V.replicate (bvLength y) X) (extend (bvLength y)) $ do
       an <- toInt (mem ! a)
       bn <- toInt (mem ! b)
       let res = an - bn
@@ -407,8 +435,8 @@ and'= zipWith (.&.)
 (|===.|) :: MemoryLike a => BinaryBVFun a
 (|===.|) = binaryFunc bweqx
 
-bweqx :: [Bit] -> [Bit] -> [Bit]
-bweqx = zipWith (\a b -> fromBool (a == b))
+bweqx :: BitA -> BitA -> BitA
+bweqx = V.zipWith (\a b -> fromBool (a == b))
 
 -- | Div
 
@@ -418,7 +446,7 @@ bweqx = zipWith (\a b -> fromBool (a == b))
     sDiv _ 0 = Nothing
     sDiv a b = Just (div a b)
 
--- div' :: [Bit] -> [Bit] -> [Bit]
+-- div' :: BitA -> BitA -> BitA
 -- div' = math sDiv
 
 -- | Div Floor
@@ -427,7 +455,7 @@ bweqx = zipWith (\a b -> fromBool (a == b))
 (|//.|) :: MemoryLike a => BinaryBVFun a
 (|//.|) = binaryFunc floorDiv
 
-floorDiv :: [Bit] -> [Bit] -> [Bit]
+floorDiv :: BitA -> BitA -> BitA
 floorDiv _a _b = undefined
 
 -- | Mod
@@ -438,7 +466,7 @@ modB = binaryFuncMath sMod
     sMod _ 0 = Nothing
     sMod a b = Just (a `mod` b)
 
--- mod' :: [Bit] -> [Bit] -> [Bit]
+-- mod' :: BitA -> BitA -> BitA
 -- mod' = math sMod
 
 -- | Equality
@@ -446,8 +474,8 @@ modB = binaryFuncMath sMod
 (|==|) :: MemoryLike a => BinaryBVFun a
 (|==|) = binaryFunc eq
 
-eq :: [Bit] -> [Bit] -> [Bit]
-eq a b = andReduce $ zipWith equal a b
+eq :: BitA -> BitA -> BitA
+eq a b = andReduce $ V.zipWith equal a b
 
 -- | Case equality
 
@@ -455,19 +483,19 @@ eq a b = andReduce $ zipWith equal a b
 (|===|) = binaryFunc caseEq
 
 {-# WARNING caseEq "Implement case equality" #-}
-caseEq :: [Bit] -> [Bit] -> [Bit]
-caseEq a b = andReduce $ zipWith (\a' b' -> fromBool (a' == b')) a b
+caseEq :: BitA -> BitA -> BitA
+caseEq a b = andReduce $ V.zipWith (\a' b' -> fromBool (a' == b')) a b
 
 -- | Greater Equal
 
 (|>=|) :: MemoryLike a => BinaryBVFun a
 (|>=|) a b y mem
-  | signed a && signed b = mem // (y, fromMaybe (replicate (bvLength y) X) $ do
+  | signed a && signed b = mem // (y, fromMaybe (V.replicate (bvLength y) X) $ do
       an <- bvToInt mem a
       bn <- bvToInt mem b
       let res = an >= bn
       convertRes res)
-  | otherwise = mem // (y, maybe (replicate (bvLength y) X) (extend (bvLength y)) $ do
+  | otherwise = mem // (y, maybe (V.replicate (bvLength y) X) (extend (bvLength y)) $ do
       an <- toInt (mem ! a)
       bn <- toInt (mem ! b)
       let res = an >= bn
@@ -475,19 +503,19 @@ caseEq a b = andReduce $ zipWith (\a' b' -> fromBool (a' == b')) a b
   where
     convertRes res = Just $ extend (bvLength y) $ fromInt $ fromIntegral $ fromEnum res
 
--- greaterEqual :: [Bit] -> [Bit] -> [Bit]
+-- greaterEqual :: BitA -> BitA -> BitA
 -- greaterEqual = math
 
 -- | Greater than
 
 (|>|) :: MemoryLike a => BinaryBVFun a
 (|>|) a b y mem
-  | signed a && signed b = mem // (y, fromMaybe (replicate (bvLength y) X) $ do
+  | signed a && signed b = mem // (y, fromMaybe (V.replicate (bvLength y) X) $ do
       an <- bvToInt mem a
       bn <- bvToInt mem b
       let res = an > bn
       convertRes res)
-  | otherwise = mem // (y, maybe (replicate (bvLength y) X) (extend (bvLength y)) $ do
+  | otherwise = mem // (y, maybe (V.replicate (bvLength y) X) (extend (bvLength y)) $ do
       an <- toInt (mem ! a)
       bn <- toInt (mem ! b)
       let res = an > bn
@@ -495,38 +523,38 @@ caseEq a b = andReduce $ zipWith (\a' b' -> fromBool (a' == b')) a b
   where
     convertRes res = Just $ extend (bvLength y) $ fromInt $ fromIntegral $ fromEnum res
 
--- greaterThan :: [Bit] -> [Bit] -> [Bit]
+-- greaterThan :: BitA -> BitA -> BitA
 -- greaterThan = math
 
 -- | Less Equal
 
 (|<=|) :: MemoryLike a => BinaryBVFun a
 (|<=|) a b y mem
-  | signed a && signed b = mem // (y, fromMaybe (replicate (bvLength y) X) $ do
+  | signed a && signed b = mem // (y, fromMaybe (V.replicate (bvLength y) X) $ do
       an <- bvToInt mem a
       bn <- bvToInt mem b
       let res = an <= bn
       convertRes res)
-  | otherwise = mem // (y, maybe (replicate (bvLength y) X) (extend (bvLength y)) $ do
+  | otherwise = mem // (y, maybe (V.replicate (bvLength y) X) (extend (bvLength y)) $ do
       an <- toInt (mem ! a)
       bn <- toInt (mem ! b)
       let res = an <= bn
       convertRes res)
   where
     convertRes res = Just $ extend (bvLength y) $ fromInt $ fromIntegral $ fromEnum res
--- lessEqual :: [Bit] -> [Bit] -> [Bit]
+-- lessEqual :: BitA -> BitA -> BitA
 -- lessEqual = math
 
 -- | Less Than
 
 (|<|) :: MemoryLike a => BinaryBVFun a
 (|<|) a b y mem
-  | signed a && signed b = mem // (y, fromMaybe (replicate (bvLength y) X) $ do
+  | signed a && signed b = mem // (y, fromMaybe (V.replicate (bvLength y) X) $ do
       an <- bvToInt mem a
       bn <- bvToInt mem b
       let res = an < bn
       convertRes res)
-  | otherwise = mem // (y, maybe (replicate (bvLength y) X) (extend (bvLength y)) $ do
+  | otherwise = mem // (y, maybe (V.replicate (bvLength y) X) (extend (bvLength y)) $ do
       an <- toInt (mem ! a)
       bn <- toInt (mem ! b)
       let res = an < bn
@@ -534,7 +562,7 @@ caseEq a b = andReduce $ zipWith (\a' b' -> fromBool (a' == b')) a b
   where
     convertRes res = Just $ extend (bvLength y) $ fromInt $ fromIntegral $ fromEnum res
 
--- lessThan :: [Bit] -> [Bit] -> [Bit]
+-- lessThan :: BitA -> BitA -> BitA
 -- lessThan = math
 
 -- | Logic And
@@ -542,7 +570,7 @@ caseEq a b = andReduce $ zipWith (\a' b' -> fromBool (a' == b')) a b
 (|&&|) :: MemoryLike a => BinaryBVFun a
 (|&&|) = binaryFunc lAnd
 
-lAnd :: [Bit] -> [Bit] -> [Bit]
+lAnd :: BitA -> BitA -> BitA
 lAnd a b = boolReduce (a `and'` b)
 
 -- | Logic Or
@@ -550,7 +578,7 @@ lAnd a b = boolReduce (a `and'` b)
 (||||) :: MemoryLike a => BinaryBVFun a
 (||||) = binaryFunc lOr
 
-lOr :: [Bit] -> [Bit] -> [Bit]
+lOr :: BitA -> BitA -> BitA
 lOr a b = boolReduce (a `or'` b)
 
 -- | Or
@@ -558,24 +586,24 @@ lOr a b = boolReduce (a `or'` b)
 (|||) :: MemoryLike a => BinaryBVFun a
 (|||) = binaryFunc or'
 
-or' :: [Bit] -> [Bit] -> [Bit]
-or' = zipWith (.|.)
+or' :: BitA -> BitA -> BitA
+or' = V.zipWith (.|.)
 
 -- | XNor
 
 (|!^|) :: MemoryLike a => BinaryBVFun a
 (|!^|) = binaryFunc xnor
 
-xnor :: [Bit] -> [Bit] -> [Bit]
-xnor = zipWith ((. not) . xor)
+xnor :: BitA -> BitA -> BitA
+xnor = V.zipWith ((. not) . xor)
 
 -- | Xor
 
 (|^|) :: MemoryLike a => BinaryBVFun a
 (|^|) = binaryFunc xor'
 
-xor' :: [Bit] -> [Bit] -> [Bit]
-xor' = zipWith xor
+xor' :: BitA -> BitA -> BitA
+xor' = V.zipWith xor
 
 ------------------
 -- Multeplexers --
@@ -592,27 +620,27 @@ bwmux a b s y mem =
   let ab = mem ! a
       bb = mem ! b
       sb = mem ! s
-      res = zipWith3 (\case H -> \a' _ -> a'; L -> \_ b' -> b'; _ -> \_ _ -> X) sb ab bb
+      res = V.zipWith3 (\case H -> \a' _ -> a'; L -> \_ b' -> b'; _ -> \_ _ -> X) sb ab bb
   in mem // (y, res)
 
 demux :: MemoryLike a => BitVector -> BitVector -> BitVector -> Memory a -> Memory a
 demux a s y mem =
   let ab = mem ! a
       sb = mem ! s
-      emptySegment = replicate (length ab) L
+      emptySegment = V.replicate (length ab) L
       segment d i
         | i == d = ab
         | otherwise = emptySegment
   in case toInt sb of
-       Just i -> mem // (y, concatMap (segment i) [0..(2 ^ length sb)])
-       Nothing -> mem // (y, replicate (length ab * (2 ^ length sb)) Z)
+       Just i -> mem // (y, V.concat [segment i s | s <- [0..(2 ^ length sb)]])
+       Nothing -> mem // (y, V.replicate (length ab * (2 ^ length sb)) Z)
 
 mux :: MemoryLike a => BitVector -> BitVector -> BitVector -> BitVector -> Memory a -> Memory a
 mux a b s y mem =
   let ab = mem ! a
       bb = mem ! b
       [ s' ] = mem ! s
-      res = case s' of H -> bb; L -> ab; _ -> replicate (length ab) Z
+      res = case s' of H -> bb; L -> ab; _ -> V.replicate (length ab) Z
   in mem // (y, res)
 
 pmux :: MemoryLike a => BitVector -> BitVector -> BitVector -> BitVector -> Memory a -> Memory a
@@ -624,27 +652,23 @@ pmux a b s y mem =
         -- checks if there is no high bits
         [ L ] -> mem // (y, ab)
         -- checks if there are undefined bits
-        [ X ] -> mem // (y, replicate (length ab) X)
+        [ X ] -> mem // (y, V.replicate (length ab) X)
         _ ->
           case index sb H of
-            Just i -> mem // (y, take (bvLength y) $ drop (length ab * i) bb)
-            Nothing -> mem // (y, replicate (length ab) X)
+            Just i -> mem // (y, V.take (bvLength y) $ V.drop (length ab * i) bb)
+            Nothing -> mem // (y, V.replicate (length ab) X)
   where
     -- Both cases of not finding an element and finding it more than once are resulting in `Nothing`
-    index l e = foldl (folder e) Nothing (zip [0,1..] l)
-    folder e Nothing (i, a)
-      | e == a = Just i
-      | otherwise = Nothing
-    folder e res (i, a)
-      | e == a = Nothing
-      | otherwise = res
+    index l e =
+      let inds = V.elemIndices e l in
+        if V.length inds == 1 then Just (inds V.! 0) else Nothing
 
 
 tribuf :: MemoryLike a => BitVector -> BitVector -> BitVector -> Memory a -> Memory a
 tribuf a en y mem =
   let ab = mem ! a
       [ en' ] = mem ! en
-  in mem // (y, case en' of H -> ab; L -> replicate (length ab) Z; _ -> replicate (length ab) X)
+  in mem // (y, case en' of H -> ab; L -> V.replicate (length ab) Z; _ -> V.replicate (length ab) X)
 
 ---------------
 -- Registers --
@@ -671,7 +695,7 @@ adffe :: MemoryLike a => Bit -> Bit -> Bit -> BitVector
 adffe clkPol rstPol enPol rstVal clk rst en d q mem =
   let [ clk' ] = mem ! clk
       [ rst' ] = mem ! rst
-      [ en'  ] = mem ! en
+      [ en' ]  = mem ! en
       rstVal' = mem ! rstVal
    in if edge mem rst || edge mem clk then
     if rst' `equal'` rstPol then
@@ -687,7 +711,7 @@ adlatch :: MemoryLike a => Bit -> Bit -> BitVector
         -> BitVector -> BitVector -> BitVector -> BitVector
         -> Memory a -> Memory a
 adlatch enPol rstPol rstVal en rst d q mem =
-  let [ en'  ] = mem ! en
+  let [ en' ]  = mem ! en
       [ rst' ] = mem ! rst
       rstVal' = mem ! rstVal
    in if rst' `equal'` rstPol then
@@ -717,7 +741,7 @@ aldffe :: MemoryLike a => Bit -> Bit -> Bit -> BitVector
 aldffe clkPol rstPol enPol clk rst en ad d q mem =
   let [ clk' ] = mem ! clk
       [ rst' ] = mem ! rst
-      [ en'  ] = mem ! en
+      [ en' ]  = mem ! en
    in if edge mem rst || edge mem clk then
     if rst' `equal'` rstPol then
       mem // (q, mem ! ad)
@@ -739,7 +763,7 @@ dff clkPol clk d q mem =
 dffe :: MemoryLike a => Bit -> Bit -> BitVector -> BitVector -> BitVector -> BitVector -> Memory a -> Memory a
 dffe clkPol enPol clk en d q mem =
   let [ clk' ] = mem ! clk
-      [ en'  ] = mem ! en
+      [ en' ]  = mem ! en
   in if (clk' `equal'` clkPol && edge mem clk) && (en' `equal'` enPol) then
     mem // (q, mem ! d)
   else

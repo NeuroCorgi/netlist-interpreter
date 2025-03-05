@@ -207,7 +207,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (adff (head clkPol) (head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
+              (adff (V.head clkPol) (V.head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
     "$adffe" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
@@ -220,7 +220,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (adffe (head clkPol) (head rstPol) (head enPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d, wires q))
+              (adffe (V.head clkPol) (V.head rstPol) (V.head enPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d, wires q))
     "$adlatch" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" cParameters
@@ -231,7 +231,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (adlatch (head enPol) (head rstPol) (toBitVector rstVal) (toBitVector en) (toBitVector rst) (toBitVector d) (toBitVector q), wires en ++ wires rst ++ wires d, wires q))
+              (adlatch (V.head enPol) (V.head rstPol) (toBitVector rstVal) (toBitVector en) (toBitVector rst) (toBitVector d) (toBitVector q), wires en ++ wires rst ++ wires d, wires q))
     "$aldff" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
@@ -242,7 +242,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (aldff (head clkPol) (head rstPol) (toBitVector clk) (toBitVector rst) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d ++ wires ad, wires q))
+              (aldff (V.head clkPol) (V.head rstPol) (toBitVector clk) (toBitVector rst) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d ++ wires ad, wires q))
     "$aldffe" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" cParameters
@@ -255,7 +255,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (aldffe (head clkPol) (head rstPol) (head enPol) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d ++ wires ad, wires q))
+              (aldffe (V.head clkPol) (V.head rstPol) (V.head enPol) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d ++ wires ad, wires q))
     "$dff" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
@@ -263,7 +263,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (dff (head clkPol) (toBitVector clk) (toBitVector d) (toBitVector q), wires clk ++ wires d, wires q))
+              (dff (V.head clkPol) (toBitVector clk) (toBitVector d) (toBitVector q), wires clk ++ wires d, wires q))
     "$dffe" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
@@ -273,7 +273,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (dffe (head clkPol) (head enPol) (toBitVector clk) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires en ++ wires d, wires q))
+              (dffe (V.head clkPol) (V.head enPol) (toBitVector clk) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires en ++ wires d, wires q))
     "$sdff" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
@@ -284,7 +284,7 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (sdff (head clkPol) (head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
+              (sdff (V.head clkPol) (V.head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
     other
       | Just subdesign <- Map.lookup other subDesignMap ->
           undefined
@@ -297,7 +297,7 @@ ofCell subDesignMap Cell {..} =
     d2i '1' = Right 1
     d2i  _  = Left ""
 
-    validateWidth :: Int -> [a] -> Either String [a]
+    validateWidth :: Foldable t => Int -> t a -> Either String (t a)
     validateWidth n v
       | length v == n = Right v
       | otherwise = Left ("inconsistent width: expected " ++ show n ++ ", got " ++ show (length v))
@@ -335,7 +335,7 @@ data Design = Design
   { dNodes :: [Node]
   , dIns :: [(String, BitVector)]
   , dOuts :: [(String, BitVector)]
-  , dMemory :: Memory []
+  , dMemory :: Memory Vector
   , dUpdateMap :: Map Int [Int]
   }
 
@@ -383,29 +383,24 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
     -- The first update block should persist to allow to detect *all* edges
       where
         influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) update
-        influencedNodes = map (dNodes !!) influencedNodesInds
+        influencedNodes = map (dNodes L.!!) influencedNodesInds
 
         newMem = melt oldMem $ map (\(Node (f, ins, outs)) -> (, outs) $ f $ freeze oldMem (ins ++ outs)) influencedNodes
 
-        freeze :: Memory [] -> [Int] -> Memory IntMap
+        freeze :: Memory Vector -> [Int] -> Memory IntMap
         freeze mem@Memory{..} freezeInds = Memory
           { mMemory=IntMap.fromList $ map (id &&& (mMemory !!)) freezeInds
           , mUpdated=[update] }
 
-        melt :: Memory [] -> [(Memory IntMap, [Int])] -> Memory []
+        melt :: Memory Vector -> [(Memory IntMap, [Int])] -> Memory Vector
         melt (Memory{mMemory=origMem}) cellMem = Memory
           -- Potential optimization. What is more efficient traverse `origMem` $n$ times, or sort $n$ lists shorter than `origMem`
           -- { mMemory = foldl (\om p -> patch p (zip [0,1..] om)) origMem (map (IntMap.toAscList . mMemory) cellMem)
-          { mMemory = patch cellMemPatch (zip [0,1..] origMem)
+          { mMemory = origMem V.// cellMemPatch
           -- Tail is needed to cut the first processed update
           , mUpdated = rest ++ concatMap (tail' . mUpdated . fst) cellMem }
           where
             cellMemPatch = L.sortBy (compare `on` fst) $ concatMap (\(m, i) -> map (id &&& (IntMap.!) (mMemory m)) i) cellMem
-            patch b@((i, e) : r) l@((j, n) : t)
-              | i < j = patch r l
-              | i == j = e : patch r t
-              | i > j = n : patch b t
-            patch _ l = map snd l
 
             tail' [] = []
             tail' (_:t) = t

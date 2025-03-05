@@ -28,7 +28,7 @@ library
         aeson,
         text,
         bytestring,
-        array,
+        vector,
         extra,
         scientific,
         temporary,
