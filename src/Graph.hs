@@ -14,6 +14,9 @@ import qualified Data.List as L
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 
+import Data.Vector (Vector)
+import qualified Data.Vector as V
+
 import Data.Map (Map)
 import qualified Data.Map as Map
 
