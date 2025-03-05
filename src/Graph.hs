@@ -54,7 +54,7 @@ newtype Node = Node (Memory IntMap -> Memory IntMap, [Int], [Int])
 inputs :: Node -> [Int]
 inputs (Node (_, ins, _)) = ins
 
-ofCell :: Map String SubDesign -> Cell -> Either String Node
+ofCell :: Map String b -> Cell -> Either String Node
 ofCell subDesignMap Cell {..} =
   case cType of
     "$buf" -> do
