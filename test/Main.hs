@@ -19,6 +19,13 @@ tests = testGroup ""
     testFile "fibonacci"
   , testFile "genericBitPack"
   , testFile "registerAE"
+  , testFile "t1669"
+  , testFile "t2220"
+  , testFile "findIndex"
+  , testFile "minimum"
+  , testFile "counter"
+  , testFile "clz"
+  , testFile "loop2"
   ]
 
 main :: IO ()

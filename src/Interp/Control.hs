@@ -24,13 +24,13 @@ spaces1 = skipMany1 space
 word :: ReadP String
 word = many1 (satisfy (not . isSpace))
 
-num :: ReadP Int
+num :: ReadP Integer
 num = s2i <$> many1 (satisfy isNumber)
   where
-    s2i :: String -> Int
-    s2i = foldl (\a c -> 10 * a + digitToInt c) 0
+    s2i :: String -> Integer
+    s2i = foldl (\a c -> 10 * a + fromIntegral (digitToInt c)) 0
 
-numX :: ReadP (Maybe Int)
+numX :: ReadP (Maybe Integer)
 numX = (Just <$> num) <|> (Nothing <$ char 'x')
 
 group :: ReadP a -> ReadP (String, a)
@@ -40,12 +40,12 @@ group r = do
   val <- r
   return (key, val)
 
-newtype SetC = SetC (Map String Int) deriving Show
+newtype SetC = SetC (Map String Integer) deriving Show
 
 setC :: ReadP SetC
 setC = SetC . fromList <$> sepBy1 (group num) spaces1
 
-newtype ReadC = ReadC (Map String (Maybe Int)) deriving Show
+newtype ReadC = ReadC (Map String (Maybe Integer)) deriving Show
 
 readC :: ReadP ReadC
 readC = ReadC . fromList <$> sepBy (group numX) spaces1

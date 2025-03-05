@@ -1,24 +1,34 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
 module Graph where
 
+import Prelude hiding ((!!))
+
 import Control.Arrow (first, second, (&&&), (***))
 import Data.Foldable (foldlM)
+
 import qualified Data.List as L
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
+
 import Data.Map (Map)
 import qualified Data.Map as Map
+
 import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Maybe as Maybe
+
 import Data.Set (Set)
 import qualified Data.Set as Set
+
 import Data.IntSet (IntSet)
 import qualified Data.IntSet as IntSet
+
+import Data.IntMap (IntMap)
+import qualified Data.IntMap as IntMap
+
 import Data.Tuple (swap)
 
 import Debug.Trace (trace, traceShowId, traceShow)
@@ -26,6 +36,7 @@ import Debug.Trace (trace, traceShowId, traceShow)
 import MyLib
 
 import Memory hiding (memory)
+import Data.Function (on)
 
 infixr 9 <.>
 (<.>) :: (Functor m) => (b -> c) -> (a -> m b) -> (a -> m c)
@@ -34,19 +45,14 @@ infixr 9 <.>
 both :: (a -> b) -> (a, a) -> (b, b)
 both f (x, y) = (f x, f y)
 
-zipLeftLongest :: [a] -> [b] -> b -> [(a, b)]
-zipLeftLongest (a : ra) (b : rb) d = (a, b) : zipLeftLongest ra rb d
-zipLeftLongest (a : ra) [] d = (a, d) : zipLeftLongest ra [] d
-zipLeftLongest [] _ _ = []
-
 maybeTyple :: (Maybe a, b) -> Maybe (a, b)
 maybeTyple (Just a, b) = Just (a, b)
 maybeTyple (Nothing, _) = Nothing
 
-type Node = (Memory -> Memory, [Int], [Int])
+newtype Node = Node (Memory IntMap -> Memory IntMap, [Int], [Int])
 
 inputs :: Node -> [Int]
-inputs (_, ins, _) = ins
+inputs (Node (_, ins, _)) = ins
 
 ofCell :: Map String SubDesign -> Cell -> Either String Node
 ofCell subDesignMap Cell {..} =
@@ -55,178 +61,126 @@ ofCell subDesignMap Cell {..} =
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       y <- validateWidth width =<< lookup' "Y" outs
-      Right (id, wires a, wires y)
+      Right (Node (id, wires a, wires y))
     "$logic_not" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((!|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((!|) ab yb, a, y))
     "$neg" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((-|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((-|) ab yb, a, y))
     "$not" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((~|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((~|) ab yb, a, y))
     "$pos" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((+|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((+|) ab yb, a, y))
     "$reduce_and" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((&/|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((&/|) ab yb, a, y))
     "$reduce_bool" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((!!|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((!!|) ab yb, a, y))
     "$reduce_or" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((^/|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((^/|) ab yb, a, y))
     "$reduce_xnor" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((!^/|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((!^/|) ab yb, a, y))
     "$reduce_xor" -> do
-      (a_signed, a, y, ab, yb) <- unaryMath
-      case a_signed of
-        -- Unsigned
-        0 -> Right ((^/|) ab yb, a, y)
-        -- Signed
-        _ -> Left "unsupported"
+      (a, y, ab, yb) <- unaryMath
+      return (Node ((^/|) ab yb, a, y))
     "$add" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|+|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|+|) ab bb yb, a ++ b, y))
     "$and" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|&|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|&|) ab bb yb, a ++ b, y))
+    "$mul" -> do
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|*|) ab bb yb, a ++ b, y))
+    "$sub" -> do
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|-|) ab bb yb, a ++ b, y))
     "$bweqx" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       b <- validateWidth width =<< lookup' "B" ins
       y <- validateWidth width =<< lookup' "Y" outs
-      Right ((|===.|) (BitVector a) (BitVector b) (BitVector y), wires a ++ wires b, wires y)
+      return (Node ((|===.|) (toBitVector (a, False)) (toBitVector (b, False)) (toBitVector (y, False)), wires a ++ wires b, wires y))
     "$div" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|//|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|//|) ab bb yb, a ++ b, y))
     "$divfloor" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported" -- Do some other division here
-        _ -> Right ((|//|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|//|) ab bb yb, a ++ b, y))
     "$mod" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right (modB ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node (modB ab bb yb, a ++ b, y))
     "$modfloor" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported" -- Do some other modision here
-        _ -> Right (modB ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node (modB ab bb yb, a ++ b, y))
     "$eq" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|==|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|==|) ab bb yb, a ++ b, y))
     "$eqx" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|===|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|===|) ab bb yb, a ++ b, y))
     "$ge" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|>=|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|>=|) ab bb yb, a ++ b, y))
     "$gt" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|<|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|>|) ab bb yb, a ++ b, y))
     "$le" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|<=|) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|<=|) ab bb yb, a ++ b, y))
     "$lt" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|<|) ab bb yb, a ++ b, y)
-    "$logical_and" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((|&&|) ab bb yb, a ++ b, y)
-    "$logical_or" -> do
-      (a_signed, b_signed, a, b, y, ab, bb, yb) <- binaryMath
-      case (a_signed, b_signed) of
-        (1, 1) -> Left "unsupported"
-        _ -> Right ((||||) ab bb yb, a ++ b, y)
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|<|) ab bb yb, a ++ b, y))
+    "$logic_and" -> do
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|&&|) ab bb yb, a ++ b, y))
+    "$logic_or" -> do
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((||||) ab bb yb, a ++ b, y))
+    "$or" -> do
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|||) ab bb yb, a ++ b, y))
+    "$xor" -> do
+      (a, b, y, ab, bb, yb) <- binaryMath
+      return (Node ((|^|) ab bb yb, a ++ b, y))
     "$bmux" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       s_width <- num =<< lookup' "S_WIDTH" cParameters
       a <- validateWidth (2 ^ s_width * width) =<< lookup' "A" ins
       s <- validateWidth s_width =<< lookup' "S" ins
       y <- validateWidth width =<< lookup' "Y" outs
-      return
-        (bmux (BitVector a) (BitVector s) (BitVector y), wires a ++ wires s, wires y)
+      return (Node
+              (bmux (toBitVector a) (toBitVector s) (toBitVector y), wires a ++ wires s, wires y))
     "$bwmux" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       b <- validateWidth width =<< lookup' "B" ins
       s <- validateWidth width =<< lookup' "S" ins
       y <- validateWidth width =<< lookup' "Y" outs
-      return
-        (bwmux (BitVector a) (BitVector b) (BitVector s) (BitVector y), wires a ++ wires b ++ wires s, wires y)
+      return (Node
+              (bwmux (toBitVector a) (toBitVector b) (toBitVector s) (toBitVector y), wires a ++ wires b ++ wires s, wires y))
     "$demux" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       s_width <- num =<< lookup' "S_WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       s <- validateWidth s_width =<< lookup' "S" ins
       y <- validateWidth (width * 2 ^ s_width) =<< lookup' "Y" outs
-      return
-        (demux (BitVector a) (BitVector s) (BitVector y), wires a ++ wires s, wires y)
+      return (Node
+              (demux (toBitVector a) (toBitVector s) (toBitVector y), wires a ++ wires s, wires y))
     "$mux" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       b <- validateWidth width =<< lookup' "B" ins
       s <- validateWidth 1 =<< lookup' "S" ins
       y <- validateWidth width =<< lookup' "Y" outs
-      return
-        (mux (BitVector a) (BitVector b) (BitVector s) (BitVector y), wires a ++ wires b ++ wires s, wires y)
+      return (Node
+              (mux (toBitVector a) (toBitVector b) (toBitVector s) (toBitVector y), wires a ++ wires b ++ wires s, wires y))
     "$pmux" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       s_width <- num =<< lookup' "S_WIDTH" cParameters
@@ -234,15 +188,15 @@ ofCell subDesignMap Cell {..} =
       b <- validateWidth (width * s_width) =<< lookup' "B" ins
       s <- validateWidth s_width =<< lookup' "S" ins
       y <- validateWidth width =<< lookup' "Y" outs
-      return
-        (pmux (BitVector a) (BitVector b) (BitVector s) (BitVector y), wires a ++ wires b ++ wires s, wires y)
+      return (Node
+              (pmux (toBitVector a) (toBitVector b) (toBitVector s) (toBitVector y), wires a ++ wires b ++ wires s, wires y))
     "$tribuf" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       en <- validateWidth 1 =<< lookup' "EN" ins
       y <- validateWidth width =<< lookup' "Y" outs
-      return
-        (tribuf (BitVector a) (BitVector en) (BitVector y), wires a ++ wires en, wires y)
+      return (Node
+              (tribuf (toBitVector a) (toBitVector en) (toBitVector y), wires a ++ wires en, wires y))
     "$adff" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
@@ -252,8 +206,8 @@ ofCell subDesignMap Cell {..} =
       rst <- validateWidth 1 =<< lookup' "ARST" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (adff (head clkPol) (head rstPol) (bitVector rstVal) (BitVector clk) (BitVector rst) (BitVector d) (BitVector q), wires clk ++ wires rst ++ wires d, wires q)
+      return (Node
+              (adff (head clkPol) (head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
     "$adffe" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
@@ -265,8 +219,8 @@ ofCell subDesignMap Cell {..} =
       rst <- validateWidth 1 =<< lookup' "ARST" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (adffe (head clkPol) (head rstPol) (head enPol) (bitVector rstVal) (BitVector clk) (BitVector rst) (BitVector en) (BitVector d) (BitVector q), wires clk ++ wires rst ++ wires en ++ wires d, wires q)
+      return (Node
+              (adffe (head clkPol) (head rstPol) (head enPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d, wires q))
     "$adlatch" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" cParameters
@@ -276,8 +230,8 @@ ofCell subDesignMap Cell {..} =
       rst <- validateWidth 1 =<< lookup' "ARST" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (adlatch (head enPol) (head rstPol) (bitVector rstVal) (BitVector en) (BitVector rst) (BitVector d) (BitVector q), wires en ++ wires rst ++ wires d, wires q)
+      return (Node
+              (adlatch (head enPol) (head rstPol) (toBitVector rstVal) (toBitVector en) (toBitVector rst) (toBitVector d) (toBitVector q), wires en ++ wires rst ++ wires d, wires q))
     "$aldff" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
@@ -287,8 +241,8 @@ ofCell subDesignMap Cell {..} =
       ad <- validateWidth width =<< lookup' "AD" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (aldff (head clkPol) (head rstPol) (BitVector clk) (BitVector rst) (BitVector ad) (BitVector d) (BitVector q), wires clk ++ wires rst ++ wires d ++ wires ad, wires q)
+      return (Node
+              (aldff (head clkPol) (head rstPol) (toBitVector clk) (toBitVector rst) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d ++ wires ad, wires q))
     "$aldffe" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" cParameters
@@ -300,16 +254,16 @@ ofCell subDesignMap Cell {..} =
       ad <- validateWidth width =<< lookup' "AD" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (aldffe (head clkPol) (head rstPol) (head enPol) (BitVector clk) (BitVector rst) (BitVector en) (BitVector ad) (BitVector d) (BitVector q), wires clk ++ wires rst ++ wires en ++ wires d ++ wires ad, wires q)
+      return (Node
+              (aldffe (head clkPol) (head rstPol) (head enPol) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d ++ wires ad, wires q))
     "$dff" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
       clk <- validateWidth 1 =<< lookup' "CLK" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (dff (head clkPol) (BitVector clk) (BitVector d) (BitVector q), wires clk ++ wires d, wires q)
+      return (Node
+              (dff (head clkPol) (toBitVector clk) (toBitVector d) (toBitVector q), wires clk ++ wires d, wires q))
     "$dffe" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
@@ -318,8 +272,8 @@ ofCell subDesignMap Cell {..} =
       en <- validateWidth 1 =<< lookup' "EN" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (dffe (head clkPol) (head enPol) (BitVector clk) (BitVector en) (BitVector d) (BitVector q), wires clk ++ wires en ++ wires d, wires q)
+      return (Node
+              (dffe (head clkPol) (head enPol) (toBitVector clk) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires en ++ wires d, wires q))
     "$sdff" -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
@@ -329,8 +283,8 @@ ofCell subDesignMap Cell {..} =
       rst <- validateWidth 1 =<< lookup' "SRST" ins
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
-      return
-        (sdff (head clkPol) (head rstPol) (bitVector rstVal) (BitVector clk) (BitVector rst) (BitVector d) (BitVector q), wires clk ++ wires rst ++ wires d, wires q)
+      return (Node
+              (sdff (head clkPol) (head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
     other
       | Just subdesign <- Map.lookup other subDesignMap ->
           undefined
@@ -354,47 +308,40 @@ ofCell subDesignMap Cell {..} =
         Just a -> Right a
         Nothing -> Left ("Not found key: " ++ show key)
 
-    unaryMath :: Either String (Int, [Int], [Int], BitVector, BitVector)
+    unaryMath :: Either String ([Int], [Int], BitVector, BitVector)
     unaryMath = do
-      a_signed <- num =<< lookup' "A_SIGNED" cParameters
+      a_signed <- (== 1) <$> (num =<< lookup' "A_SIGNED" cParameters)
       a_width <- num =<< lookup' "A_WIDTH" cParameters
       y_width <- num =<< lookup' "Y_WIDTH" cParameters
       a <- validateWidth a_width =<< lookup' "A" ins
       y <- validateWidth y_width =<< lookup' "Y" outs
-      Right (a_signed, wires a, wires y, BitVector a, BitVector y)
+      Right (wires a, wires y, toBitVector (a, a_signed), toBitVector y)
 
-    binaryMath :: Either String (Int, Int, [Int], [Int], [Int], BitVector, BitVector, BitVector)
+    binaryMath :: Either String ([Int], [Int], [Int], BitVector, BitVector, BitVector)
     binaryMath = do
-      a_signed <- num =<< lookup' "A_SIGNED" cParameters
-      b_signed <- num =<< lookup' "B_SIGNED" cParameters
+      a_signed <- (== 1) <$> (num =<< lookup' "A_SIGNED" cParameters)
+      b_signed <- (== 1) <$> (num =<< lookup' "B_SIGNED" cParameters)
       a_width <- num =<< lookup' "A_WIDTH" cParameters
       b_width <- num =<< lookup' "B_WIDTH" cParameters
       y_width <- num =<< lookup' "Y_WIDTH" cParameters
       a <- validateWidth a_width =<< lookup' "A" ins
       b <- validateWidth b_width =<< lookup' "B" ins
       y <- validateWidth y_width =<< lookup' "Y" outs
-      Right (a_signed, b_signed, wires a, wires b, wires y, BitVector a, BitVector b, BitVector y)
+      Right (wires a, wires b, wires y, toBitVector (a, a_signed), toBitVector (b, b_signed), toBitVector y)
 
     (ins, outs) = both Map.fromList . L.partition ((fromMaybe False . (== Input) <.> (`Map.lookup` cPortDirections)) . fst) $ Map.toList cConnections
 
 data Design = Design
-  { nodes :: [Node]
-  , ins :: [(String, BitVector)]
-  , outs :: [(String, BitVector)]
-  , memory :: Memory
-  , update_map :: Map Int [Int]
-  }
-
-data SubDesign = SubDesign
-  { nodes :: [Node]
-  , ins :: [(String, BitVector)]
-  , outs :: [(String, BitVector)]
-  , update_map :: Map Int [Int]
+  { dNodes :: [Node]
+  , dIns :: [(String, BitVector)]
+  , dOuts :: [(String, BitVector)]
+  , dMemory :: Memory []
+  , dUpdateMap :: Map Int [Int]
   }
 
 instance Show Design where
   show Design{..} =
-    "Design{ins=[" ++ show ins ++ "], outs=[" ++ show outs ++ "], update_map=" ++ show update_map ++ ", memory=" ++ show memory ++ "}"
+    "Design{ins=[" ++ show dIns ++ "], outs=[" ++ show dOuts ++ "], update_map=" ++ show dUpdateMap ++ ", memory=" ++ show dMemory ++ "}"
 
 -- compileSub :: Module -> Either String (SubDesign, [(BitVector, [Bit])]
 -- compileSub Module{..} = do
@@ -402,18 +349,19 @@ instance Show Design where
   -- let update_map = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, (_, nodeIns, _)) -> map (, i) nodeIns) $ zip [0..] nodes
 
 compile :: NonEmpty Module -> Either String Design
-compile (Module {cells=mCells, ports, netnames} :| submods') = do
-  nodes <- mapM (ofCell Map.empty) mCells
-  let updateMap = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, (_, nodeIns, _)) -> map (, i) nodeIns) $ zip [0..] nodes
+compile (Module {cells=mCells, ports, netnames} :| submods) = do
+  nodes' <- nodes
+  let updateMap = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, (Node (_, nodeIns, _))) -> map (, i) nodeIns) $ zip [0..] nodes'
   return Design
-    { nodes = nodes
-    , ins = ins
-    , outs = outs
-    , memory = foldl (//) (empty (n_bits (ports, netnames))) inits
-    , update_map = updateMap
+    { dNodes = nodes'
+    , dIns = ins
+    , dOuts = outs
+    , dMemory = foldl (//) (empty (n_bits (ports, netnames))) inits
+    , dUpdateMap = updateMap
     }
   where
-    submods = topoSort submods'
+    -- submods = topoSort submods'
+    nodes = mapM (ofCell Map.empty) mCells
 
     n_bits = uncurry max . (pb *** nb)
     pb = maximum' . map (maximum' . wires . pBits)
@@ -422,91 +370,64 @@ compile (Module {cells=mCells, ports, netnames} :| submods') = do
     maximum' [] = 0
     maximum' l@(_:_) = maximum l
 
-    inits = mapMaybe (\Net{..} -> (BitVector nBits, ) . bitString <$> Map.lookup "init" nAttributes) netnames
+    inits = mapMaybe (\Net{..} -> (toBitVector nBits, ) . bitString <$> Map.lookup "init" nAttributes) netnames
 
-    ins = map (pName &&& (BitVector . pBits)) $ filter ((== Input) . direction) ports
-    outs = map (pName &&& (BitVector . pBits)) $ filter ((== Output) . direction) ports
-
-    remap :: Int -> Module -> (Module, Int)
-    remap shift m@Module{..} = (
-      -- Possible to optimize for a single pass, to update and find next shift number at the same time
-      m{ ports = map remapPort ports
-       , cells = map remapCells cells
-       , netnames = map remapNet netnames
-       }, shift + n_bits (ports, netnames))
-      where
-        rewire = map (\case W a -> W (a + shift); b@(B _) -> b)
-
-        remapPort p@Port{..} = p{ pBits = rewire pBits }
-        remapCells c@Cell{..} = c{ cConnections = Map.map rewire cConnections}
-        remapNet n@Net{..} = n{ nBits = rewire nBits }
-
-    topoSort :: [Module] -> [Module]
-    topoSort modules =
-      map (nameMod Map.!) $ go [] Set.empty $ Map.keys nameMod
-      where
-        nameMod = Map.fromList $ map (name &&& id) modules
-        referencedModules = Map.fromList $ map (name &&& map cType . filter (\case Cell{cType='$':_} -> False; _ -> True) . cells) modules
-        
-        go :: [String] -> Set String -> [String] -> [String]
-        go sorted _seen [] = sorted
-        go sorted seen queue = go (sorted ++ front) seen' queue'
-          where
-            (front, queue') = L.partition (all (`Set.member` seen) . (referencedModules Map.!)) queue
-            seen' = foldl (\s' -> (`Set.insert` s')) seen front
+    ins = map (pName &&& (toBitVector . pBits)) $ filter ((== Input) . direction) ports
+    outs = map (pName &&& (toBitVector . pBits)) $ filter ((== Output) . direction) ports
 
 step :: Design -> Design
-step d@Design {memory, nodes, update_map} = d{memory=go memory}
+step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
   where
-    go mem@Memory{updated=[]} = mem
-    go oldMem@Memory{updated=update:_} = newMem
+    go mem@Memory{mUpdated=[]} = mem
+    go oldMem@Memory{mUpdated=update:rest} = newMem
     -- The first update block should persist to allow to detect *all* edges
       where
-        -- runningMem = oldMem{updated=ups}
-        influencedNodesInds = traceShowId (L.nub . concat $ mapMaybe ((`Map.lookup` update_map) . fst) update)
-        influencedNodes = map (\(a, _, _) -> a) . reverse . topoSort . prepare $ map (nodes !!) influencedNodesInds
-        endMem@Memory{updated=_:rest} = traceShow oldMem $ traceShowId (foldl (\mem node -> node mem) oldMem influencedNodes)
-        newMem = endMem{updated=rest}
+        influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) update
+        influencedNodes = map (dNodes !!) influencedNodesInds
 
-        -- Trim all dangling inputs to prepare for topological sort
-        -- Leave only inputs that are outputs of some node that we are sorting
-        prepare :: [Node] -> [Node]
-        prepare nodes = nodes'
-          where
-            outputs = IntSet.fromList $ concatMap (\(_, _, a) -> a) nodes
-            nodes' = map (\(f, ins, outs) -> (f, filter (`IntSet.member` outputs) ins, outs)) nodes
+        newMem = melt oldMem $ map (\(Node (f, ins, outs)) -> (, outs) $ f $ freeze oldMem (ins ++ outs)) influencedNodes
 
-        topoSort :: [Node] -> [Node]
-        topoSort [] = []
-        -- Stupid workaround for a self recursive cell
-        topoSort [one] = [one]
-        topoSort lst = go [] IntSet.empty lst
+        freeze :: Memory [] -> [Int] -> Memory IntMap
+        freeze mem@Memory{..} freezeInds = Memory
+          { mMemory=IntMap.fromList $ map (id &&& (mMemory !!)) freezeInds
+          , mUpdated=[update] }
+
+        melt :: Memory [] -> [(Memory IntMap, [Int])] -> Memory []
+        melt (Memory{mMemory=origMem}) cellMem = Memory
+          -- Potential optimization. What is more efficient traverse `origMem` $n$ times, or sort $n$ lists shorter than `origMem`
+          -- { mMemory = foldl (\om p -> patch p (zip [0,1..] om)) origMem (map (IntMap.toAscList . mMemory) cellMem)
+          { mMemory = patch cellMemPatch (zip [0,1..] origMem)
+          -- Tail is needed to cut the first processed update
+          , mUpdated = rest ++ concatMap (tail' . mUpdated . fst) cellMem }
           where
-            go :: [Node] -> IntSet -> [Node] -> [Node]
-            go sorted _seen [] = sorted
-            go sorted seen queue = go (sorted ++ front) seen' queue'
-              where
-                (front, queue') = L.partition (all (`IntSet.member` seen) . (\(_, a, _) -> a)) queue
-                seen' = foldl (foldl (\s' -> (`IntSet.insert` s'))) seen $ map (\(_, _, a) -> a) front
+            cellMemPatch = L.sortBy (compare `on` fst) $ concatMap (\(m, i) -> map (id &&& (IntMap.!) (mMemory m)) i) cellMem
+            patch b@((i, e) : r) l@((j, n) : t)
+              | i < j = patch r l
+              | i == j = e : patch r t
+              | i > j = n : patch b t
+            patch _ l = map snd l
+
+            tail' [] = []
+            tail' (_:t) = t
 
 eval :: Design -> Design
-eval d@Design{memory=Memory{updated=[]}} = d
+eval d@Design{dMemory=Memory{mUpdated=[]}} = d
 eval d = eval . step $ d
 
-start :: Design -> Map String Int -> Design
-start d@Design {memory=mem, ins, outs} state =
-  let inits = Maybe.mapMaybe (swap <.> maybeTyple . first (`Map.lookup` state)) ins
+start :: Design -> Map String Integer -> Design
+start d@Design {dMemory=mem, dIns, dOuts} state =
+  let inits = Maybe.mapMaybe (swap <.> maybeTyple . first (`Map.lookup` state)) dIns
       memory' = L.foldl' (\m (a, n) -> m // (a, extend (bvLength a) $ fromInt n)) mem inits
   in
-      d {memory = memory'}
+      d {dMemory = memory'}
 
-peek :: Design -> Map String (Maybe Int)
-peek Design{memory, outs} = Map.fromList $ map (second (toInt . (memory !))) outs
+peek :: Design -> Map String (Maybe Integer)
+peek Design{dMemory, dOuts} = Map.fromList $ map (second (toInt . (dMemory !))) dOuts
 
-exec :: Design -> Map String Int -> Map String (Maybe Int)
-exec d@Design {memory=mem, ins, outs} state =
-  let inits = Maybe.mapMaybe (swap <.> maybeTyple . first (`Map.lookup` state)) ins
+exec :: Design -> Map String Integer -> Map String (Maybe Integer)
+exec d@Design {dMemory=mem, dIns, dOuts} state =
+  let inits = Maybe.mapMaybe (swap <.> maybeTyple . first (`Map.lookup` state)) dIns
       memory' = L.foldl' (\m (a, n) -> m // (a, fromInt n)) mem inits
-      d' = eval d {memory = memory'}
-      memory'' = memory d'
-   in Map.fromList $ map (second (toInt . (memory'' !))) outs
+      d' = eval d {dMemory = memory'}
+      memory'' = dMemory d'
+   in Map.fromList $ map (second (toInt . (memory'' !))) dOuts

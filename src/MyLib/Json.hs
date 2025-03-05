@@ -62,7 +62,7 @@ data Port = Port
   { direction :: Direction
   , bits :: [Q]
   , offset :: Maybe Int
-  , upto :: Maybe Bool
+  -- , upto :: Maybe Bool
   , signed :: Maybe Int
   }
 $( deriveFromJSON defaultOptions 'Port )
@@ -71,7 +71,7 @@ data Net = Net
   { bits :: [Q]
   , offset :: Maybe Int
   , attributes :: AttrMap
-  , upto :: Maybe Bool
+  -- , upto :: Maybe Bool
   , signed :: Maybe Int
   }
 $( deriveFromJSON defaultOptions 'Net )

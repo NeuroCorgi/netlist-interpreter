@@ -1,0 +1,3 @@
+c$arg_0 4 c$arg_1 8 c$arg_2 18446744073709551614 -> result 18446744073709551614
+c$arg_0 4 c$arg_1 8 c$arg_2 9 -> result 4
+c$arg_0 123 c$arg_1 8 c$arg_2 9 -> result 8

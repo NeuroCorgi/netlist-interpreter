@@ -1,0 +1,6 @@
+rst 1 clk 0 -> d 1
+rst 0 clk 1 -> d 1
+clk 0
+clk 1 -> d 2
+clk 0
+clk 1 -> d 1

@@ -24,7 +24,6 @@ data Port = Port
     direction :: Direction,
     pBits :: [BVE],
     offset :: Int,
-    upto :: Bool,
     signed :: Bool
   }
   deriving (Show)
@@ -85,8 +84,6 @@ ofJson (J.TopLevel mods) = map namedModule $ Map.assocs mods
           direction = (\case J.Input -> Input; J.Output -> Output; J.InOut -> InOut) direction,
           pBits = map bitWire bits,
           offset = fromMaybe 0 offset,
-          upto = fromMaybe False upto,
-          -- signed = fromMaybe False signed
           signed = False
         }
 
