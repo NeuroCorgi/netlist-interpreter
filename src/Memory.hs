@@ -613,10 +613,13 @@ xor' = V.zipWith xor
 ------------------
 
 bmux :: MemoryLike a => BitVector -> BitVector -> BitVector -> Memory a -> Memory a
-bmux a s _y mem =
-  let _ab = mem ! a
-      _sb = mem ! s
-  in undefined
+bmux a s y mem =
+  let ab = mem ! a
+      sb = mem ! s
+  in mem // (y, case toInt sb of
+                Just i -> V.slice (fromInteger i * width) width ab
+                Nothing -> V.replicate width X)
+  where width = bvLength y
 
 bwmux :: MemoryLike a => BitVector -> BitVector -> BitVector -> BitVector -> Memory a -> Memory a
 bwmux a b s y mem =
@@ -658,7 +661,7 @@ pmux a b s y mem =
         [ X ] -> mem // (y, V.replicate (length ab) X)
         _ ->
           case index sb H of
-            Just i -> mem // (y, V.take (bvLength y) $ V.drop (length ab * i) bb)
+            Just i -> mem // (y, V.slice (length ab * i) (bvLength y) bb)
             Nothing -> mem // (y, V.replicate (length ab) X)
   where
     -- Both cases of not finding an element and finding it more than once are resulting in `Nothing`
