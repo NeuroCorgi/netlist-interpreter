@@ -382,10 +382,11 @@ step :: Design -> Design
 step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
   where
     go mem@Memory{mUpdated=[]} = mem
-    go oldMem@Memory{mUpdated=update:rest} = newMem
+    go oldMem@Memory{mUpdated=updates} = newMem
     -- The first update block should persist to allow to detect *all* edges
       where
-        influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) update
+        ups = concat updates
+        influencedNodesInds = L.nub $ concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) ups
         influencedNodes = map (dNodes L.!!) influencedNodesInds
 
         newMem = melt oldMem $ map (\(Node (f, ins, outs)) -> (, outs) $ f $ freeze oldMem (ins ++ outs)) influencedNodes
@@ -393,7 +394,7 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
         freeze :: Memory Vector -> [Int] -> Memory IntMap
         freeze mem@Memory{..} freezeInds = Memory
           { mMemory=IntMap.fromList $ map (id &&& (mMemory !!)) freezeInds
-          , mUpdated=[update] }
+          , mUpdated=[ups] }
 
         melt :: Memory Vector -> [(Memory IntMap, [Int])] -> Memory Vector
         melt (Memory{mMemory=origMem}) cellMem = Memory
@@ -401,12 +402,12 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
           -- { mMemory = foldl (\om p -> patch p (zip [0,1..] om)) origMem (map (IntMap.toAscList . mMemory) cellMem)
           { mMemory = origMem V.// cellMemPatch
           -- Tail is needed to cut the first processed update
-          , mUpdated = rest ++ concatMap (tail' . mUpdated . fst) cellMem }
+          , mUpdated = concatMap (init' . mUpdated . fst) cellMem }
           where
             cellMemPatch = L.sortBy (compare `on` fst) $ concatMap (\(m, i) -> map (id &&& (IntMap.!) (mMemory m)) i) cellMem
 
-            tail' [] = []
-            tail' (_:t) = t
+            init' [] = []
+            init' l = init l
 
 eval :: Design -> Design
 eval d@Design{dMemory=Memory{mUpdated=[]}} = d

@@ -245,7 +245,7 @@ clearUpdated mem = mem{mUpdated=[]}
       memory' = update patch mMemory
       changed = mapMaybe (\i -> (i ,) <$> maybeEdge (mMemory !! i) (memory' !! i)) $ wires bv
   in m{ mMemory = memory'
-      , mUpdated = mUpdated ++ [changed]
+      , mUpdated = changed : mUpdated
       }
   where
     maybeEdge :: Bit -> Bit -> Maybe Edge
