@@ -90,6 +90,7 @@ import Debug.Trace (traceShow, traceShowId)
 
 import Bit
 import Data.Function (on)
+import Control.Arrow (second)
 
 not :: Bit -> Bit
 not = complement
@@ -172,7 +173,7 @@ bit  _  = undefined
 bitString :: String -> [Bit]
 bitString = reverse . map bit
 
-data Edge = Rising | Falling deriving Show
+data Edge = Rising | Falling | Other Bit deriving Show
 
 bvLength :: BitVector -> Int
 bvLength (BitVector bv _) = length bv
@@ -203,10 +204,15 @@ data (MemoryLike a) => Memory a =
   }
 
 stageUpdates :: (MemoryLike a) => Memory a -> Memory a
-stageUpdates unstaged@Memory{..} = unstaged{mMemory=mUpMemory, mUpdated=tail' mUpdated}
+stageUpdates unstaged@Memory{..} = unstaged{mMemory = newMemory, mUpMemory = newMemory}
   where
-    tail' [] = []
-    tail' (_:r) = r
+    newMemory = update patch mMemory
+
+    patch = sortBy (compare `on` fst) $ concatMap (map (second fromEdge)) mUpdated
+
+    fromEdge Rising = H
+    fromEdge Falling = L
+    fromEdge (Other b) = b
 
 deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
@@ -230,11 +236,11 @@ clearUpdated mem = mem{mUpdated=[]}
       }
   where
     maybeEdge :: Bit -> Bit -> Maybe Edge
-    maybeEdge H H = Nothing
     maybeEdge _ H = Just Rising
-    maybeEdge L L = Nothing
     maybeEdge _ L = Just Falling
-    maybeEdge _ _ = Nothing
+    maybeEdge a b
+      | a /= b = Just (Other b)
+      | otherwise = Nothing
 
 (!) :: MemoryLike a => Memory a -> BitVector -> [Bit]
 (!) (Memory {mMemory=mem}) (BitVector bv _) = map (\case B b -> b; W w -> mem !! w) bv

@@ -379,14 +379,15 @@ step :: Design -> Design
 step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
   where
     go mem@Memory{mUpdated=[]} = mem
-    go oldMem@Memory{mUpdated=update:rest} = newMem
+    go oldMem@Memory{mUpdated=updates} = newMem
     -- The first update block should persist to allow to detect *all* edges
       where
-        influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) update
+        influencedNodesInds = L.nub . concat $ concatMap (mapMaybe ((`Map.lookup` dUpdateMap) . fst)) updates
         influencedNodes = map (dNodes !!) influencedNodesInds
 
-        endMem = L.foldl' (\mem (Node (f, _, _)) -> f mem) oldMem influencedNodes
-        newMem = stageUpdates endMem
+        runningMem = stageUpdates oldMem
+        endMem@Memory{mUpdated=newUpdates} = L.foldl' (\mem (Node (f, _, _)) -> f mem) runningMem influencedNodes
+        newMem = endMem{mUpdated=drop (length updates) newUpdates}
 
         -- freeze :: Memory [] -> [Int] -> Memory IntMap
         -- freeze mem@Memory{..} freezeInds = Memory
