@@ -1,7 +1,9 @@
 module Interp.Main
   ( exec
   , readDesign
+  , G.compile
   , readCommands
+  , liftEither
   , module Interp.Control
   )
 where
@@ -13,7 +15,7 @@ import System.Environment
 
 import Control.Monad (foldM)
 import Data.List.Extra (trim)
-import Data.List.NonEmpty (nonEmpty)
+import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import Data.Map (fromList, empty)
 import Data.String (fromString)
 
@@ -32,7 +34,7 @@ sanitize ('/' : rest) = '.' : sanitize rest
 sanitize (c : rest) = c : sanitize rest
 sanitize [] = []
 
-readDesign :: FilePath -> IO G.Design
+readDesign :: FilePath -> IO (NonEmpty Module)
 readDesign filePath = do
   path <- emptyTempFile "designs" (sanitize filePath ++ ".json")
   let log = path ++ ".log"
@@ -50,7 +52,7 @@ readDesign filePath = do
   hPutStrLn stderr path
   modules <- liftEither $ MyLib.mods jsonDesign
   case nonEmpty modules of
-    Just modules -> liftEither $ G.compile modules
+    Just modules -> return modules
     Nothing -> fail "empty design"
 
 readCommands :: FilePath -> IO [Command]

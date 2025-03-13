@@ -13,9 +13,6 @@ import Data.List.Extra (trim)
 
 import Control.Monad (when)
 
-liftEither :: MonadFail m => Either String a -> m a
-liftEither = either fail return
-
 repl :: G.Design -> IO ()
 repl design = do
   putStr "> "
@@ -38,11 +35,13 @@ main = do
   args <- getArgs
   case args of
     [designPath, controlPath] -> do
-      design <- readDesign designPath
+      modules <- readDesign designPath
+      design <- liftEither $ G.compile modules
       control <- readCommands controlPath
       _ <- exec design control
       return ()
     [designPath] -> do
-      design <- readDesign designPath
+      modules <- readDesign designPath
+      design <- liftEither $ G.compile modules
       repl design
     _ -> fail "Usage: <design-path> [control-path]"

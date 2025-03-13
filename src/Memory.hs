@@ -4,6 +4,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module Memory
   ( Memory (..),
@@ -77,6 +78,9 @@ module Memory
 where
 
 import Prelude hiding (not, or, and, all, (!!))
+
+import Data.Data (Data)
+
 import Data.List (foldl1', find, sortBy)
 import qualified Data.List as L
 import Data.Foldable (foldrM)
@@ -89,6 +93,7 @@ import Debug.Trace (traceShow, traceShowId)
 
 import Bit
 import Data.Function (on)
+import Data.Typeable (Typeable)
 
 not :: Bit -> Bit
 not = complement
@@ -124,7 +129,7 @@ fromInt n
   | otherwise = H : fromInt n'
   where n' = n `div` 2
 
-data BVE = W Int | B Bit deriving Show
+data BVE = W Int | B Bit deriving (Show, Data)
 data BitVector = BitVector [BVE] Bool
   deriving Show
 
@@ -171,7 +176,7 @@ bit  _  = undefined
 bitString :: String -> [Bit]
 bitString = reverse . map bit
 
-data Edge = Rising | Falling deriving Show
+data Edge = Rising | Falling deriving (Show, Data)
 
 bvLength :: BitVector -> Int
 bvLength (BitVector bv _) = length bv
@@ -200,6 +205,7 @@ data (MemoryLike a) => Memory a =
   , mUpdated :: [[(Int, Edge)]]
   }
 
+deriving instance (MemoryLike a, Typeable a, Data (a Bit)) => Data (Memory a)
 deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
 -- instance (Show (c Int)) => Show (Memory c)

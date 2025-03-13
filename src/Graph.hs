@@ -7,12 +7,11 @@ module Graph where
 
 import Prelude hiding ((!!))
 
-import Control.Arrow (first, second, (&&&), (***))
+import Control.Arrow (first, second, (&&&))
 import Data.Foldable (foldlM)
 
 import qualified Data.List as L
 import Data.List.NonEmpty (NonEmpty(..))
-import qualified Data.List.NonEmpty as NE
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -20,22 +19,15 @@ import qualified Data.Map as Map
 import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Maybe as Maybe
 
-import Data.Set (Set)
-import qualified Data.Set as Set
-
-import Data.IntSet (IntSet)
-import qualified Data.IntSet as IntSet
-
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 
 import Data.Tuple (swap)
 
-import Debug.Trace (trace, traceShowId, traceShow)
-
 import MyLib
+import CellKinds
 
-import Memory hiding (memory)
+import Memory
 import Data.Function (on)
 
 infixr 9 <.>
@@ -56,100 +48,100 @@ inputs (Node (_, ins, _)) = ins
 
 ofCell :: Map String b -> Cell -> Either String Node
 ofCell subDesignMap Cell {..} =
-  case cType of
-    "$buf" -> do
+  case cKind of
+    Buf -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       y <- validateWidth width =<< lookup' "Y" outs
       Right (Node (id, wires a, wires y))
-    "$logic_not" -> do
+    LogicNot -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((!|) ab yb, a, y))
-    "$neg" -> do
+    Neg -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((-|) ab yb, a, y))
-    "$not" -> do
+    Not -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((~|) ab yb, a, y))
-    "$pos" -> do
+    Pos -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((+|) ab yb, a, y))
-    "$reduce_and" -> do
+    ReduceAnd -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((&/|) ab yb, a, y))
-    "$reduce_bool" -> do
+    ReduceBool -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((!!|) ab yb, a, y))
-    "$reduce_or" -> do
+    ReduceOr -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((^/|) ab yb, a, y))
-    "$reduce_xnor" -> do
+    ReduceXnor -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((!^/|) ab yb, a, y))
-    "$reduce_xor" -> do
+    ReduceXor -> do
       (a, y, ab, yb) <- unaryMath
       return (Node ((^/|) ab yb, a, y))
-    "$add" -> do
+    Add -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|+|) ab bb yb, a ++ b, y))
-    "$and" -> do
+    And -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|&|) ab bb yb, a ++ b, y))
-    "$mul" -> do
+    Mul -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|*|) ab bb yb, a ++ b, y))
-    "$sub" -> do
+    Sub -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|-|) ab bb yb, a ++ b, y))
-    "$bweqx" -> do
+    Bweqx -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       b <- validateWidth width =<< lookup' "B" ins
       y <- validateWidth width =<< lookup' "Y" outs
       return (Node ((|===.|) (toBitVector (a, False)) (toBitVector (b, False)) (toBitVector (y, False)), wires a ++ wires b, wires y))
-    "$div" -> do
+    Div -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|//|) ab bb yb, a ++ b, y))
-    "$divfloor" -> do
+    Divfloor -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|//|) ab bb yb, a ++ b, y))
-    "$mod" -> do
+    Mod -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node (modB ab bb yb, a ++ b, y))
-    "$modfloor" -> do
+    Modfloor -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node (modB ab bb yb, a ++ b, y))
-    "$eq" -> do
+    Eq -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|==|) ab bb yb, a ++ b, y))
-    "$eqx" -> do
+    Eqx -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|===|) ab bb yb, a ++ b, y))
-    "$ge" -> do
+    Ge -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|>=|) ab bb yb, a ++ b, y))
-    "$gt" -> do
+    Gt -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|>|) ab bb yb, a ++ b, y))
-    "$le" -> do
+    Le -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|<=|) ab bb yb, a ++ b, y))
-    "$lt" -> do
+    Lt -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|<|) ab bb yb, a ++ b, y))
-    "$logic_and" -> do
+    LogicAnd -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|&&|) ab bb yb, a ++ b, y))
-    "$logic_or" -> do
+    LogicOr -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((||||) ab bb yb, a ++ b, y))
-    "$or" -> do
+    Or -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|||) ab bb yb, a ++ b, y))
-    "$xor" -> do
+    Xor -> do
       (a, b, y, ab, bb, yb) <- binaryMath
       return (Node ((|^|) ab bb yb, a ++ b, y))
-    "$bmux" -> do
+    Bmux -> do
       width <- num =<< lookup' "WIDTH" cParameters
       s_width <- num =<< lookup' "S_WIDTH" cParameters
       a <- validateWidth (2 ^ s_width * width) =<< lookup' "A" ins
@@ -157,7 +149,7 @@ ofCell subDesignMap Cell {..} =
       y <- validateWidth width =<< lookup' "Y" outs
       return (Node
               (bmux (toBitVector a) (toBitVector s) (toBitVector y), wires a ++ wires s, wires y))
-    "$bwmux" -> do
+    Bwmux -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       b <- validateWidth width =<< lookup' "B" ins
@@ -165,7 +157,7 @@ ofCell subDesignMap Cell {..} =
       y <- validateWidth width =<< lookup' "Y" outs
       return (Node
               (bwmux (toBitVector a) (toBitVector b) (toBitVector s) (toBitVector y), wires a ++ wires b ++ wires s, wires y))
-    "$demux" -> do
+    Demux -> do
       width <- num =<< lookup' "WIDTH" cParameters
       s_width <- num =<< lookup' "S_WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
@@ -173,7 +165,7 @@ ofCell subDesignMap Cell {..} =
       y <- validateWidth (width * 2 ^ s_width) =<< lookup' "Y" outs
       return (Node
               (demux (toBitVector a) (toBitVector s) (toBitVector y), wires a ++ wires s, wires y))
-    "$mux" -> do
+    Mux -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       b <- validateWidth width =<< lookup' "B" ins
@@ -181,7 +173,7 @@ ofCell subDesignMap Cell {..} =
       y <- validateWidth width =<< lookup' "Y" outs
       return (Node
               (mux (toBitVector a) (toBitVector b) (toBitVector s) (toBitVector y), wires a ++ wires b ++ wires s, wires y))
-    "$pmux" -> do
+    Pmux -> do
       width <- num =<< lookup' "WIDTH" cParameters
       s_width <- num =<< lookup' "S_WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
@@ -190,14 +182,14 @@ ofCell subDesignMap Cell {..} =
       y <- validateWidth width =<< lookup' "Y" outs
       return (Node
               (pmux (toBitVector a) (toBitVector b) (toBitVector s) (toBitVector y), wires a ++ wires b ++ wires s, wires y))
-    "$tribuf" -> do
+    Tribuf -> do
       width <- num =<< lookup' "WIDTH" cParameters
       a <- validateWidth width =<< lookup' "A" ins
       en <- validateWidth 1 =<< lookup' "EN" ins
       y <- validateWidth width =<< lookup' "Y" outs
       return (Node
               (tribuf (toBitVector a) (toBitVector en) (toBitVector y), wires a ++ wires en, wires y))
-    "$adff" -> do
+    Adff -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
       rstPol<- bitString <$> lookup' "ARST_POLARITY" cParameters
@@ -208,7 +200,7 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (adff (head clkPol) (head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
-    "$adffe" -> do
+    Adffe -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
       enPol <- bitString <$> lookup' "EN_POLARITY" cParameters
@@ -221,7 +213,7 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (adffe (head clkPol) (head rstPol) (head enPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d, wires q))
-    "$adlatch" -> do
+    Adlatch -> do
       width <- num =<< lookup' "WIDTH" cParameters
       enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" cParameters
       rstPol<- (validateWidth 1 . bitString) =<< lookup' "ARST_POLARITY" cParameters
@@ -232,7 +224,7 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (adlatch (head enPol) (head rstPol) (toBitVector rstVal) (toBitVector en) (toBitVector rst) (toBitVector d) (toBitVector q), wires en ++ wires rst ++ wires d, wires q))
-    "$aldff" -> do
+    Aldff -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
       rstPol<- (validateWidth 1 . bitString) =<< lookup' "ALOAD_POLARITY" cParameters
@@ -243,7 +235,7 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (aldff (head clkPol) (head rstPol) (toBitVector clk) (toBitVector rst) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d ++ wires ad, wires q))
-    "$aldffe" -> do
+    Aldffe -> do
       width <- num =<< lookup' "WIDTH" cParameters
       enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
@@ -256,7 +248,7 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (aldffe (head clkPol) (head rstPol) (head enPol) (toBitVector clk) (toBitVector rst) (toBitVector en) (toBitVector ad) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires en ++ wires d ++ wires ad, wires q))
-    "$dff" -> do
+    Dff -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
       clk <- validateWidth 1 =<< lookup' "CLK" ins
@@ -264,7 +256,7 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (dff (head clkPol) (toBitVector clk) (toBitVector d) (toBitVector q), wires clk ++ wires d, wires q))
-    "$dffe" -> do
+    Dffe -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- (validateWidth 1 . bitString) =<< lookup' "CLK_POLARITY" cParameters
       enPol <- (validateWidth 1 . bitString) =<< lookup' "EN_POLARITY" cParameters
@@ -273,8 +265,8 @@ ofCell subDesignMap Cell {..} =
       d <- validateWidth width =<< lookup' "D" ins
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
-              (dffe (head clkPol) (head enPol) (toBitVector clk) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires en ++ wires d, wires q))
-    "$sdff" -> do
+              (dffe (head clkPol) (head enPol) (toBitVector clk) (toBitVector en) (toBitVector d) (toBitVector q), wires clk ++ wires en ++ wires d, wires q)) 
+    Sdff -> do
       width <- num =<< lookup' "WIDTH" cParameters
       clkPol <- bitString <$> lookup' "CLK_POLARITY" cParameters
       rstPol <- bitString <$> lookup' "SRST_POLARITY" cParameters
@@ -285,10 +277,10 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (sdff (head clkPol) (head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
-    other
-      | Just subdesign <- Map.lookup other subDesignMap ->
+    SubDesign name
+      | Just subdesign <- Map.lookup name subDesignMap ->
           undefined
-      | otherwise -> Left ("Unknown node: " ++ other)
+      | otherwise -> Left ("Unknown node: " ++ name)
   where
     num :: String -> Either String Int
     num = foldlM (\y x -> (+) <$> d2i x <*> return (y * 2)) 0
@@ -343,27 +335,22 @@ instance Show Design where
   show Design{..} =
     "Design{ins=[" ++ show dIns ++ "], outs=[" ++ show dOuts ++ "], update_map=" ++ show dUpdateMap ++ ", memory=" ++ show dMemory ++ "}"
 
--- compileSub :: Module -> Either String (SubDesign, [(BitVector, [Bit])]
--- compileSub Module{..} = do
-  -- nodes <- mapM ofCell cells
-  -- let update_map = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, (_, nodeIns, _)) -> map (, i) nodeIns) $ zip [0..] nodes
-
 compile :: NonEmpty Module -> Either String Design
-compile (Module {cells=mCells, ports, netnames} :| submods) = do
+compile (Module {modCells=cells, modInputs=inputs, modOutputs=outputs, modNetnames=netnames} :| submods) = do
   nodes' <- nodes
-  let updateMap = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, (Node (_, nodeIns, _))) -> map (, i) nodeIns) $ zip [0..] nodes'
-  return Design
+  let updateMap = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, Node (_, nodeIns, _)) -> map (, i) nodeIns) $ zip [0..] nodes'
+  return $ eval $ Design
     { dNodes = nodes'
     , dIns = ins
     , dOuts = outs
-    , dMemory = foldl (//) (empty (n_bits (ports, netnames))) inits
+    , dMemory = foldl (//) (empty (n_bits inputs outputs netnames)) inits
     , dUpdateMap = updateMap
     }
   where
     -- submods = topoSort submods'
-    nodes = mapM (ofCell Map.empty) mCells
+    nodes = mapM (ofCell Map.empty) cells
 
-    n_bits = uncurry max . (pb *** nb)
+    n_bits ins outs nets = maximum' [pb ins, pb outs, nb nets]
     pb = maximum' . map (maximum' . wires . pBits)
     nb = maximum' . map (maximum' . wires . nBits)
 
@@ -372,8 +359,8 @@ compile (Module {cells=mCells, ports, netnames} :| submods) = do
 
     inits = mapMaybe (\Net{..} -> (toBitVector nBits, ) . bitString <$> Map.lookup "init" nAttributes) netnames
 
-    ins = map (pName &&& (toBitVector . pBits)) $ filter ((== Input) . direction) ports
-    outs = map (pName &&& (toBitVector . pBits)) $ filter ((== Output) . direction) ports
+    ins = map (pName &&& (toBitVector . pBits)) inputs
+    outs = map (pName &&& (toBitVector . pBits)) outputs
 
 step :: Design -> Design
 step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}

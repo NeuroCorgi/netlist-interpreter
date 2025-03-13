@@ -7,7 +7,8 @@ testFile :: FilePath -> TestTree
 testFile designName = testCase designName $ do
   let designPath = "test/" ++ designName ++ ".v"
   let controlPath = "test/" ++ designName ++ ".control"
-  design <- readDesign designPath
+  modules <- readDesign designPath
+  design <- liftEither $ compile modules
   control <- readCommands controlPath
   _ <- exec design control
   return ()

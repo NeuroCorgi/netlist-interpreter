@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module MyLib where
 
@@ -10,41 +11,39 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified MyLib.Json as J
 
+import Data.Data (Data)
+import Data.Typeable (Typeable)
+
 import Memory
+import CellKinds
 
 type Attribute = String
 
 type AttrMap = Map String Attribute
 
 data Direction = Input | Output | InOut
-  deriving (Show, Eq)
+  deriving (Show, Eq, Data)
 
 data Port = Port
   { pName :: String,
-    direction :: Direction,
     pBits :: [BVE],
-    offset :: Int,
-    signed :: Bool
-  }
-  deriving (Show)
+    pOffset :: Int,
+    pSigned :: Bool
+  } deriving Data
 
 data Net = Net
-  { nName :: String,
-    nBits :: [BVE],
+  { nBits :: [BVE],
     nAttributes :: AttrMap,
     nSigned :: Bool
-  }
-  deriving (Show)
+  } deriving Data
 
 data Cell = Cell
-  { cName :: String,
-    cType :: String,
+  { cKind :: CellKinds.Kind,
     cAttributes :: AttrMap,
     cParameters :: Map String String,
     cPortDirections :: Map String Direction,
     cConnections :: Map String [BVE]
-  }
-  deriving (Show)
+  } deriving Data
 
 -- data Memory = Memory
 --   { name :: String
@@ -53,45 +52,55 @@ data Cell = Cell
 --   , start_offset :: Int
 --   , size :: Int
 --   }
---   deriving Show
 
 data Module = Module
-  { name :: String,
-    attributes :: AttrMap,
-    ports :: [Port],
-    cells :: [Cell],
-    -- , memories :: [Memory]
-    netnames :: [Net]
-  }
-  deriving Show
+  { modName :: String,
+    modAttributes :: AttrMap,
+    modInputs :: [Port],
+    modOutputs :: [Port],
+    modCells :: [Cell],
+    -- modMemories :: [Memory]
+    modNetnames :: [Net]
+  } deriving Data
 
 ofJson :: J.TopLevel -> [Module]
 ofJson (J.TopLevel mods) = map namedModule $ Map.assocs mods
   where
     namedModule (name, J.Module {..}) =
       Module
-        { name = name,
-          attributes = attributes,
-          ports = map namedPort $ Map.assocs $ fromMaybe Map.empty ports,
-          cells = map namedCell $ Map.assocs $ fromMaybe Map.empty cells,
-          -- , memories=map namedMemo $ Map.assocs $ fromMaybe Map.empty memories
-          netnames = map namedNetName $ Map.assocs $ fromMaybe Map.empty netnames
+        { modName = name,
+          modAttributes = attributes,
+          modInputs = map namedPort ins,
+          modOutputs = map namedPort outs,
+          modCells = map namedCell $ Map.assocs $ fromMaybe Map.empty cells,
+          -- modMemories = map namedMemo $ Map.assocs $ fromMaybe Map.empty memories
+          modNetnames = map namedNetName $ Map.assocs $ fromMaybe Map.empty netnames
         }
+      where
+        (ins, outs) = partitionPorts $ Map.assocs $ fromMaybe Map.empty ports
+        
+    partitionPorts :: [(String, J.Port)] -> ([(String, J.Port)], [(String, J.Port)])
+    partitionPorts = go [] []
+      where
+        go ins outs [] = (ins, outs)
+        go ins outs (port@(_, p) : rest) =
+          case J.direction p of
+            J.Input -> go (port : ins) outs rest
+            J.Output -> go ins (port : outs) rest
+            J.InOut -> go (port : ins) (port : outs) rest
 
     namedPort (name, J.Port {..}) =
       Port
         { pName = name,
-          direction = (\case J.Input -> Input; J.Output -> Output; J.InOut -> InOut) direction,
           pBits = map bitWire bits,
-          offset = fromMaybe 0 offset,
-          signed = False
+          pOffset = fromMaybe 0 offset,
+          pSigned = Just 1 == signed
         }
 
     namedCell (name, J.Cell {..}) =
       Cell
-      { cName = name
-      , cAttributes = attributes
-      , cType = typ
+      { cAttributes = attributes
+      , cKind = CellKinds.fromString typ
       , cParameters = parameters
       , cPortDirections = Map.map (\case J.Input -> Input; J.Output -> Output; J.InOut -> InOut) port_directions
       , cConnections = Map.map (map bitWire) connections
@@ -108,8 +117,7 @@ ofJson (J.TopLevel mods) = map namedModule $ Map.assocs mods
 
     namedNetName (name, J.Net {..}) =
       Net
-        { nName = name,
-          nBits = map bitWire bits,
+        { nBits = map bitWire bits,
           nAttributes = attributes,
           nSigned = Just 1 == signed
         }

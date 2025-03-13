@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveDataTypeable #-}
+
 module Bit
   ( Bit(..)
   , fromBool
@@ -11,12 +13,15 @@ module Bit
   )
 where
 
+import Data.Data (Data)
+import Data.Typeable (Typeable)
+
 data Bit
   = H
   | L
   | X
   | Z
-  deriving (Eq, Show)
+  deriving (Eq, Show, Data, Typeable)
 
 fromBool :: Bool -> Bit
 fromBool True = H
