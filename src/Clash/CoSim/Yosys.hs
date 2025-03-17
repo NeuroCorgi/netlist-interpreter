@@ -12,6 +12,7 @@ module Clash.CoSim.Yosys
   -- * Functions to make expanded splice happy
   , mapFromList
   , mapLookup
+  , PrimitiveGuard(HasBlackBox)
   )
 where
 
@@ -28,13 +29,12 @@ import Clash.Prelude (pack)
 import Clash.Signal.Internal (Signal((:-)))
 import qualified Clash.Signal (KnownDomain, Signal, Clock, Reset, Enable, fromEnable, unsafeToActiveHigh)
 import qualified Clash.Sized.BitVector (BitVector)
+import Clash.Annotations.Primitive (PrimitiveGuard(HasBlackBox))
 
 import Interp.Main (readDesign)
 import qualified MyLib as I
 import qualified Memory as M
 import qualified Graph as G
-
-
 
 both :: (a -> b) -> (a, a) -> (b, b)
 both f (x, y) = (f x, f y)
@@ -65,8 +65,10 @@ externalComponent filePath = do
       markedInputs = markInputs topLevel
       markedOutputs = map (, Other) $ I.modOutputs topLevel
       clockName = List.find ((== Clock) . snd) markedInputs
-      init = mkName "init"
+      init = mkName "initState"
       initD = valD (varP init) (normalB [| compile $(liftData modules) |]) []
+  noinlineAnn <- pragInlD name NoInline FunLike AllPhases
+  hasBlackBoxAnn <- pragAnnD (ValueAnnotation name) [| (HasBlackBox [] ()) |]
   case clockName of
     -- clock name is needed to tick it during update, separately from all other inputs
     Just clockName -> do
@@ -93,14 +95,14 @@ externalComponent filePath = do
                  |]) [] ]
           ] ]
       sig <- sigD name [t| Clash.Signal.KnownDomain $(varT dom) => $(makeArrow argTys outTy) |]
-      return [sig, dec]
+      return [sig, dec, noinlineAnn, hasBlackBoxAnn]
     _ -> do
       let (names, acss, argTys) = convertInputs Nothing markedInputs
           outTy = convertOutputs Nothing markedOutputs
       dec <- funD name
         [clause names (normalB [| 0 |]) []]
       sig <- sigD name (makeArrow argTys outTy)
-      return [sig, dec]
+      return [sig, dec, noinlineAnn, hasBlackBoxAnn]
   where
     makeMapping inputs = [| mapFromList $(listE $ map (\(p, a) -> [| ($(liftString $ I.pName p), toInteger $a) |]) inputs) |]
     makeUnmapping out [output] = makeSingleUnmap out output
@@ -111,7 +113,7 @@ externalComponent filePath = do
 externalComponentE :: FilePath -> Q Exp
 externalComponentE filePath = do
   -- It may not be the best thing to do, but it's precisely known what `externalComponent` is going to return
-  decs@[SigD name _, _] <- externalComponent filePath
+  decs@(SigD name _ : _) <- externalComponent filePath
   letE (map pure decs) (varE name)
 
 data Role
