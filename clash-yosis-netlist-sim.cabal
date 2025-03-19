@@ -1,0 +1,94 @@
+cabal-version:   3.0
+name:            clash-yosys-netlist-sim
+version:         0.1.0.0
+license:         BSD-3-Clause
+license-file:    LICENSE
+maintainer:      pokatilov0802@gmail.com
+author:          Aleksandr Pokatilov
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+library
+    exposed-modules:
+        -- Interp.Main
+        -- Interp.Control
+        Other
+        Clash.CoSim.Yosys
+    other-modules:
+        Internal.Json
+        Internal.Intermediate
+        Internal.Intermediate.CellKinds
+        Internal.Interpreter
+        Internal.Interpreter.CompState
+        Internal.Interpreter.Node
+        Internal.Memory
+        Internal.Memory.Bit
+        Internal.Util
+
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base ^>=4.19.0.0,
+        containers,
+        aeson,
+        text,
+        bytestring,
+        array,
+        extra,
+        scientific,
+        temporary,
+        process,
+        template-haskell,
+        clash-prelude,
+        sqlite-simple,
+        hashable,
+        transformers
+
+-- executable netlist-sim
+--     main-is:          Main.hs
+--     hs-source-dirs:   exe
+--     default-language: Haskell2010
+--     ghc-options:      -Wall
+--     build-depends:
+--         base ^>=4.19.0.0,
+--         containers,
+--         extra,
+--         clash-yosys-netlist-sim
+
+test-suite netlist-sim-unittest
+    type:             exitcode-stdio-1.0
+    main-is:          Test.hs
+    hs-source-dirs:   test
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base ^>=4.19.0.0,
+        tasty,
+        tasty-hunit,
+        clash-yosys-netlist-sim
+
+test-suite netlist-sim-inttest
+    type: exitcode-stdio-1.0
+    main-is: Main.hs
+    hs-source-dirs: test
+    default-language: Haskell2010
+    ghc-options: -Wall
+    build-depends:
+        base ^>=4.19.0.0,
+        tasty,
+        tasty-hunit,
+        clash-yosys-netlist-sim
+
+test-suite netlist-sim-clash-test
+    type: exitcode-stdio-1.0
+    main-is: Clash.hs
+    hs-source-dirs: test
+    default-language: Haskell2010
+    ghc-options: -Wall
+    build-depends:
+        base ^>=4.19.0.0,
+        tasty,
+        tasty-hunit,
+        clash-prelude,
+        clash-yosys-netlist-sim

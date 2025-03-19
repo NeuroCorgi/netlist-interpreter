@@ -6,7 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module Memory
+module Internal.Memory
   ( Memory (..),
     MemoryLike(..),
     empty,
@@ -83,17 +83,18 @@ import Data.Data (Data)
 
 import Data.List (foldl1', find, sortBy)
 import qualified Data.List as L
+
 import Data.Foldable (foldrM)
+import Data.Function (on)
 import Data.Maybe (fromMaybe, mapMaybe, isJust, catMaybes)
+
+import Data.Typeable (Typeable)
 
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IM
 
-import Debug.Trace (traceShow, traceShowId)
+import Internal.Memory.Bit
 
-import Bit
-import Data.Function (on)
-import Data.Typeable (Typeable)
 
 not :: Bit -> Bit
 not = complement
@@ -106,12 +107,6 @@ and = foldl1' (.&.)
 
 all :: (a -> Bit) -> [a] -> Bit
 all f = and . map f
-
--- zipLongest :: [a] -> [a] -> a -> [(a, a)]
--- zipLongest (a : ra) (b : rb) d = (a, b) : zipLongest ra rb d
--- zipLongest (a : ra) [] d = (a, d) : zipLongest ra [] d
--- zipLongest [] (b : rb) d = (d, b) : zipLongest [] rb d
--- zipLongest [] [] _ = []
 
 toInt :: [Bit] -> Maybe Integer
 toInt = foldrM (\d a -> (+) <$> toD d <*> return (a * 2)) 0
@@ -203,6 +198,8 @@ data (MemoryLike a) => Memory a =
   Memory
   { mMemory :: a Bit
   , mUpdated :: [[(Int, Edge)]]
+  , mSubMem :: [a Bit]
+  , mSubDes :: [a Bit]
   }
 
 deriving instance (MemoryLike a, Typeable a, Data (a Bit)) => Data (Memory a)
@@ -210,10 +207,12 @@ deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
 -- instance (Show (c Int)) => Show (Memory c)
 
-empty :: Int -> Memory []
-empty n = Memory
+empty :: Int -> [Int] -> [Int] -> Memory []
+empty n submem subdes = Memory
   { mMemory = replicate (n + 1) Z
   , mUpdated = []
+  , mSubMem = map (\n -> replicate (n + 1) Z) submem
+  , mSubDes = map (\n -> replicate (n + 1) Z) subdes
   }
 
 clearUpdated :: (MemoryLike a) => Memory a -> Memory a
