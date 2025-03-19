@@ -1,7 +1,6 @@
 import Test.Tasty
 
-import qualified MemoryTest
-
+import qualified Test.Unit.Memory as MemoryTest
 
 tests :: TestTree
 tests = testGroup ""

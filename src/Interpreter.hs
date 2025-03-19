@@ -72,10 +72,10 @@ step :: Design -> Design
 step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
   where
     go mem@Memory{mUpdated=[]} = mem
-    go oldMem@Memory{mUpdated=update:rest} = newMem
-    -- The first update block should persist to allow to detect *all* edges
+    go oldMem@Memory{mUpdated=updates} = newMem
       where
-        influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) update
+        ups = concat updates
+        influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) ups
         influencedNodes = map (dNodes !!) influencedNodesInds
 
         newMem = melt oldMem $ map (\(Node (f, ins, outs)) -> (, outs) $ f $ freeze oldMem (ins ++ outs)) influencedNodes
@@ -83,7 +83,7 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
         freeze :: Memory [] -> [Int] -> Memory IntMap
         freeze mem@Memory{..} freezeInds = Memory
           { mMemory=IntMap.fromList $ map (id &&& (mMemory !!)) freezeInds
-          , mUpdated=[update]
+          , mUpdated=[ups]
           , mSubMem = mempty
           , mSubDes = mempty }
 
@@ -93,7 +93,7 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
           -- { mMemory = foldl (\om p -> patch p (zip [0,1..] om)) origMem (map (IntMap.toAscList . mMemory) cellMem)
           { mMemory = patch cellMemPatch (zip [0,1..] origMem)
           -- Tail is needed to cut the first processed update
-          , mUpdated = rest ++ concatMap (tail' . mUpdated . fst) cellMem
+          , mUpdated = concatMap (init' . mUpdated . fst) cellMem
           , mSubMem = mempty
           , mSubDes = mempty }
           where
@@ -104,8 +104,8 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
               | i > j = n : patch b t
             patch _ l = map snd l
 
-            tail' [] = []
-            tail' (_:t) = t
+            init' [] = []
+            init' l = init l
 
 eval :: Design -> Design
 eval d@Design{dMemory=Memory{mUpdated=[]}} = d

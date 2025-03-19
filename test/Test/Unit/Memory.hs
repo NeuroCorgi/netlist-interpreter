@@ -1,4 +1,4 @@
-module MemoryTest (tests) where
+module Test.Unit.Memory (tests) where
 
 import Test.Tasty
 import Test.Tasty.HUnit

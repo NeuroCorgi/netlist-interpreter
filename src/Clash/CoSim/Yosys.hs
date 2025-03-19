@@ -13,6 +13,7 @@ module Clash.CoSim.Yosys
   -- * Functions to make template haskell happy
   , mapFromList
   , mapLookup
+  , maybeFromJust
   , traceShowId
   , PrimitiveGuard(HasBlackBox)
   )
@@ -22,7 +23,7 @@ import Language.Haskell.TH hiding (Role)
 import Language.Haskell.TH.Syntax (liftString, liftData)
 
 import Data.List.NonEmpty (NonEmpty((:|)))
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, fromJust)
 import Data.Either.Extra (fromRight')
 import qualified Data.Map as Map (Map, fromList, lookup, (!))
 import qualified Data.List as List (nub, partition, find)
@@ -82,6 +83,9 @@ mapFromList = Map.fromList
 
 mapLookup :: Ord k => Map.Map k v -> k -> v
 mapLookup = (Map.!)
+
+maybeFromJust :: Maybe a -> a
+maybeFromJust = fromJust
 ---
 
 {- | Instantiates the provided verilog design.
