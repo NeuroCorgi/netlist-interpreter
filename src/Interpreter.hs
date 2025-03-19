@@ -5,7 +5,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Internal.Interpreter where
+module Interpreter where
 
 import Prelude hiding ((!!))
 
@@ -25,10 +25,10 @@ import qualified Data.IntMap as IntMap
 import Data.Tuple (swap)
 import Data.Function (on)
 
-import Internal.Intermediate
-import Internal.Memory
-import Internal.Interpreter.Node
-import Internal.Interpreter.CompState
+import Intermediate
+import Memory
+import Interpreter.Node
+import Interpreter.CompState
 
 maybeTyple :: (Maybe a, b) -> Maybe (a, b)
 maybeTyple (Just a, b) = Just (a, b)

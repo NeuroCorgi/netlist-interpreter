@@ -1,6 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
 
-module Internal.Interpreter.Node where
+module Interpreter.Node where
 
 import Control.Monad.Fail
 
@@ -12,11 +12,11 @@ import qualified Data.List as L
 import Data.IntMap (IntMap)
 import Data.Foldable (foldlM)
 
-import Internal.Interpreter.CompState
+import Interpreter.CompState
 
-import Internal.Memory
-import Internal.Intermediate (Cell(..), Direction(..))
-import Internal.Intermediate.CellKinds
+import Memory
+import Intermediate (Cell(..), Direction(..))
+import Intermediate.CellKinds
 
 infixr 9 <.>
 (<.>) :: (Functor m) => (b -> c) -> (a -> m b) -> (a -> m c)

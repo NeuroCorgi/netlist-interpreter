@@ -6,7 +6,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module Internal.Memory
+module Memory
   ( Memory (..),
     MemoryLike(..),
     empty,
@@ -93,7 +93,7 @@ import Data.Typeable (Typeable)
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IM
 
-import Internal.Memory.Bit
+import Memory.Bit
 
 
 not :: Bit -> Bit

@@ -5,7 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TupleSections #-}
 
-module Internal.Json
+module Json
   ( TopLevel(..)
   , Module(..)
   , Port(..)

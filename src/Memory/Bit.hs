@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module Internal.Memory.Bit
+module Memory.Bit
   ( Bit(..)
   , fromBool
   , complement

@@ -1,7 +1,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Internal.Util( readDesign, compile ) where
+module Util( readDesign, compile ) where
 
 import System.IO
 import System.IO.Temp
@@ -14,9 +14,9 @@ import Data.Hashable ( hash )
 import Data.String ( fromString )
 import Data.Either.Extra ( fromRight' )
 
-import qualified Internal.Json as Json
-import qualified Internal.Intermediate as Intermediate
-import qualified Internal.Interpreter as Compile
+import qualified Json as Json
+import qualified Intermediate as Intermediate
+import qualified Interpreter as Compile
 
 liftEither :: MonadFail m => Either String a -> m a
 liftEither = either fail return

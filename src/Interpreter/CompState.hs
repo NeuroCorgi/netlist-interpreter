@@ -1,7 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Internal.Interpreter.CompState where
+module Interpreter.CompState where
 
 import Control.Monad.Trans.State
 

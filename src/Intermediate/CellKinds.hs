@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module Internal.Intermediate.CellKinds where
+module Intermediate.CellKinds where
 
 import Data.Data (Data)
 import Data.Typeable (Typeable)

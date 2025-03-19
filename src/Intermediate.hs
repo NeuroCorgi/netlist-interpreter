@@ -3,7 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 
-module Internal.Intermediate
+module Intermediate
   ( Direction(..)
   , Port(..)
   , Cell(..)
@@ -24,10 +24,10 @@ import qualified Data.List as L
 import Data.Text (Text)
 import Data.Data (Data)
 
-import qualified Internal.Json as J
-import Internal.Memory
+import qualified Json as J
+import Memory
 
-import qualified Internal.Intermediate.CellKinds as CellKinds
+import qualified Intermediate.CellKinds as CellKinds
 
 type Attribute = String
 
