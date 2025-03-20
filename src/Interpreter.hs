@@ -11,6 +11,7 @@ import Prelude hiding ((!!))
 
 import Control.Arrow (first, second, (&&&))
 
+import Data.Vector (Vector)
 import qualified Data.List as L
 
 import Data.Map (Map)
@@ -88,7 +89,7 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
         -- Although, a something else might be better, having that we have known the exact number of cells and ideally
         -- we can check if node was seen in constant time
         influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) ups
-        influencedNodes = map (dNodes !!) influencedNodesInds
+        influencedNodes = map (dNodes L.!!) influencedNodesInds
 
         runningMem = stageUpdates oldMem
         endMem@Memory{mUpdated=newUpdates} = L.foldl' (\mem (Node (f, _, _)) -> f mem) runningMem influencedNodes

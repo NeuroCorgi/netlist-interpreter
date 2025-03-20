@@ -89,6 +89,8 @@ import Control.Arrow (second)
 import Data.List (foldl1', find, sortBy)
 -- import qualified Data.List as L
 
+import Data.Data (Data)
+
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 -- import qualified Data.Array.Utils as AU
@@ -107,12 +109,6 @@ import Data.Foldable (foldrM, find)
 
 import GHC.Base hiding (not, empty)
 import GHC.Integer.Logarithms
-
-import Bit
-
-pattern SA :: a -> V.Vector a
-pattern SA a <- (\v -> V.head v -> a)
-  where SA a = V.singleton a
 
 not :: Bit -> Bit
 not = complement
@@ -163,6 +159,7 @@ clogBase x y | x > 1 && y > 0 =
 clogBase _ _ = Nothing
 
 data BVE = W Int | B Bit deriving (Show, Data)
+
 data BitVector = BitVector [BVE] Bool
   deriving Show
 
@@ -210,7 +207,7 @@ bitString :: String -> BitA
 bitString s = V.fromList bits
   where bits = reverse $ map bit s
 
-data Edge = Rising | Falling | Other Bit deriving (Show, Data)
+data Edge = Rising | Falling | Other Bit deriving Show
 
 bvLength :: BitVector -> Int
 bvLength (BitVector bv _) = length bv
@@ -249,13 +246,13 @@ stageUpdates unstaged@Memory{..} = unstaged{mMemory = newMemory, mUpMemory = new
 
 deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
-empty :: Int -> Memory Vector
+empty :: Int -> [Int] -> [Int] -> Memory Vector
 empty n submem subdes = Memory
   { mMemory = V.replicate (n + 1) Z
   , mUpMemory = V.replicate (n + 1) Z
   , mUpdated = []
-  , mSubMem = map (\n -> replicate (n + 1) Z) submem
-  , mSubDes = map (\n -> replicate (n + 1) Z) subdes
+  , mSubMem = map (\n -> V.replicate (n + 1) Z) submem
+  , mSubDes = map (\n -> V.replicate (n + 1) Z) subdes
   }
 
 clearUpdated :: (MemoryLike a) => Memory a -> Memory a

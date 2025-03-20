@@ -39,7 +39,7 @@ library
         temporary,
         process,
         template-haskell,
-        clash-prelude,
+        clash-prelude ^>=1.8.0,
         sqlite-simple,
         hashable,
         transformers

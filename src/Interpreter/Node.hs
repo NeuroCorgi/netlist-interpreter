@@ -28,9 +28,6 @@ infixr 9 <.>
 both :: (a -> b) -> (a, a) -> (b, b)
 both f (x, y) = (f x, f y)
 
-maybeTyple :: (Maybe a, b) -> Maybe (a, b)
-maybeTyple (Just a, b) = Just (a, b)
-maybeTyple (Nothing, _) = Nothing
 
 newtype Node = Node (Memory Vector -> Memory Vector, [Int], [Int])
 
@@ -318,4 +315,3 @@ ofCell subDesignMap Cell {..} =
       return (wires a, wires b, wires y, toBitVector (a, a_signed), toBitVector (b, b_signed), toBitVector y)
 
     (ins, outs) = both M.fromList . L.partition ((fromMaybe False . (== Input) <.> (`M.lookup` cPortDirections)) . fst) $ M.toList cConnections
-
