@@ -14,7 +14,6 @@ module Clash.CoSim.Yosys
   , mapFromList
   , mapLookup
   , maybeFromJust
-  , traceShowId
   , PrimitiveGuard(HasBlackBox)
   )
 where
@@ -34,13 +33,11 @@ import Clash.Signal.Internal (Signal((:-)))
 import qualified Clash.Signal (KnownDomain, Signal, Clock, Reset, Enable, fromEnable, unsafeToActiveHigh)
 import qualified Clash.Sized.BitVector (BitVector)
 
-import Util (readDesign)
 
 import qualified Intermediate as I
 import qualified Memory as M
 import qualified Interpreter as C
-
-import Debug.Trace (traceShowId)
+import qualified Util as U
 
 genit :: Name -> Q [Dec]
 genit name = [d| $(varP name) = (+ 1) |]
@@ -59,10 +56,10 @@ tick ::
   (Map.Map String (Maybe Integer), C.Design)
 tick clockName state ins =
   let
+    -- Read outputs from previous input or from initial setup if it's the first clock cycle
+    out = C.peek state
     -- Pull clock down, set all the values, pull clock up
     state' = C.eval $ put (Map.fromList [(clockName, 1)]) $ C.eval $ put ins $ C.eval $ put (Map.fromList [(clockName, 0)]) state
-    -- Read outputs
-    out = C.peek state'
   in
     -- Pull clock back down again, just in case
     (out, C.eval $ put (Map.fromList [(clockName, 0)]) state')
@@ -73,7 +70,7 @@ tick clockName state ins =
 -- Just wrapper functions to use in Template Haskell splice
 -- so users do not need to import the wrapped functions themselves
 compile :: I.Module -> C.Design
-compile mods = fromRight' $ traceShowId $ C.compile mods
+compile = U.compile
 
 compile' :: C.Design
 compile' = fromRight' $ Left ""
@@ -152,7 +149,7 @@ externalComponent ::
 externalComponent topLevelName filePath = do
   -- Only the first element, which is a topLevel of the design, is of interesest
   -- as only its inputs and outputs are exposed
-  topLevel <- runIO $ readDesign filePath topLevelName
+  topLevel <- runIO $ U.readDesign filePath topLevelName
   let name = mkName $ I.modName topLevel
       markedInputs = markInputs topLevel
       markedOutputs = map (, Other) $ I.modOutputs topLevel
