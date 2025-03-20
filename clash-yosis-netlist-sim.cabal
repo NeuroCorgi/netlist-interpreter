@@ -1,5 +1,5 @@
 cabal-version:   3.0
-name:            yosys-bb
+name:            clash-yosys-netlist-sim
 version:         0.1.0.0
 license:         BSD-3-Clause
 license-file:    LICENSE
@@ -10,13 +10,19 @@ extra-doc-files: CHANGELOG.md
 
 library
     exposed-modules:
-        Interp.Main
-        Interp.Control
-        MyLib
-        Graph
+        -- Interp.Main
+        -- Interp.Control
+        Util
+        Interpreter
+        Clash.CoSim.Yosys
+    other-modules:
+        Json
+        Intermediate
+        Intermediate.CellKinds
+        Interpreter.CompState
+        Interpreter.Node
         Memory
-        MyLib.Json
-        Bit
+        Memory.Bit
 
     hs-source-dirs:   src
     default-language: Haskell2010
@@ -32,19 +38,13 @@ library
         scientific,
         temporary,
         process,
+        template-haskell,
+        clash-prelude,
+        sqlite-simple,
+        hashable,
+        transformers
 
-executable yosys-interp
-    main-is:          Main.hs
-    hs-source-dirs:   exe
-    default-language: Haskell2010
-    ghc-options:      -Wall
-    build-depends:
-        base ^>=4.19.0.0,
-        containers,
-        extra,
-        yosys-bb
-
-test-suite yosys-bb-unittest
+test-suite netlist-sim-unittest
     type:             exitcode-stdio-1.0
     main-is:          Test.hs
     hs-source-dirs:   test
@@ -54,16 +54,25 @@ test-suite yosys-bb-unittest
         base ^>=4.19.0.0,
         tasty,
         tasty-hunit,
-        yosys-bb
+        clash-yosys-netlist-sim
 
-test-suite yosys-bb-inttest
+test-suite netlist-sim-inttest
     type: exitcode-stdio-1.0
     main-is: Main.hs
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall
+    default-extensions:
+        DataKinds
+        ViewPatterns
+        TemplateHaskell
     build-depends:
         base ^>=4.19.0.0,
         tasty,
         tasty-hunit,
-        yosys-bb
+        clash-prelude,
+        containers,
+        clash-yosys-netlist-sim,
+        ghc-typelits-natnormalise,
+        ghc-typelits-extra,
+        ghc-typelits-knownnat

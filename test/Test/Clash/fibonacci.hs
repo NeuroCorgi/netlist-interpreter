@@ -1,0 +1,18 @@
+module Test.Clash.Fibonacci where
+
+import Prelude hiding (not)
+
+import Clash.Prelude
+import Clash.Explicit.Testbench
+import Clash.CoSim.Yosys
+
+topEntity :: KnownDomain dom => Clock dom -> Reset dom -> Enable dom -> Signal dom (Unsigned 64)
+topEntity clk rst en = fmap unpack ($(externalComponentE "topEntity" "test/verilog/fibonacci.v") clk rst en)
+
+testBench :: Signal System Bool
+testBench = done
+  where
+    expectedOutput = outputVerifier' clk rst $(listToVecTH [1 :: Unsigned 64,1,2,3,5])
+    done           = expectedOutput (topEntity clk rst enableGen)
+    clk            = tbSystemClockGen (not <$> done)
+    rst            = systemResetGen

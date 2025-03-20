@@ -1,31 +1,23 @@
 import Test.Tasty
 import Test.Tasty.HUnit
 
-import Interp.Main
-
-testFile :: FilePath -> TestTree
-testFile designName = testCase designName $ do
-  let designPath = "test/" ++ designName ++ ".v"
-  let controlPath = "test/" ++ designName ++ ".control"
-  design <- readDesign designPath
-  control <- readCommands controlPath
-  _ <- exec design control
-  return ()
+import Test.Clash.Fibonacci
+import Test.Clash.BlockRam
 
 tests :: TestTree
 tests = testGroup ""
   [
     -- testFile "lotsOfState"
-    testFile "fibonacci"
-  , testFile "genericBitPack"
-  , testFile "registerAE"
-  , testFile "t1669"
-  , testFile "t2220"
-  , testFile "findIndex"
-  , testFile "minimum"
-  , testFile "counter"
-  , testFile "clz"
-  , testFile "loop2"
+  --   testFile "fibonacci"
+  -- , testFile "genericBitPack"
+  -- , testFile "registerAE"
+  -- , testFile "t1669"
+  -- , testFile "t2220"
+  -- , testFile "findIndex"
+  -- , testFile "minimum"
+  -- , testFile "counter"
+  -- , testFile "clz"
+  -- , testFile "loop2"
   ]
 
 main :: IO ()

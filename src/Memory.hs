@@ -8,6 +8,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module Memory
   ( Memory (..),
@@ -94,10 +95,12 @@ import qualified Data.Vector as V
 
 import Data.Maybe (fromMaybe, mapMaybe, isJust, catMaybes)
 
+import Data.Typeable (Typeable)
+
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IM
 
-import Debug.Trace (traceShow, traceShowId)
+import Memory.Bit
 
 import Data.Function (on)
 import Data.Foldable (foldrM, find)
@@ -159,7 +162,7 @@ clogBase x y | x > 1 && y > 0 =
                 else Just (I# z1)
 clogBase _ _ = Nothing
 
-data BVE = W Int | B Bit deriving Show
+data BVE = W Int | B Bit deriving (Show, Data)
 data BitVector = BitVector [BVE] Bool
   deriving Show
 
@@ -207,7 +210,7 @@ bitString :: String -> BitA
 bitString s = V.fromList bits
   where bits = reverse $ map bit s
 
-data Edge = Rising | Falling | Other Bit deriving Show
+data Edge = Rising | Falling | Other Bit deriving (Show, Data)
 
 bvLength :: BitVector -> Int
 bvLength (BitVector bv _) = length bv
@@ -229,6 +232,8 @@ data (MemoryLike a) => Memory a =
   { mMemory :: a Bit
   , mUpMemory :: a Bit
   , mUpdated :: [[(Int, Edge)]]
+  , mSubMem :: [a Bit]
+  , mSubDes :: [a Bit]
   }
 
 stageUpdates :: (MemoryLike a) => Memory a -> Memory a
@@ -245,10 +250,12 @@ stageUpdates unstaged@Memory{..} = unstaged{mMemory = newMemory, mUpMemory = new
 deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
 empty :: Int -> Memory Vector
-empty n = Memory
+empty n submem subdes = Memory
   { mMemory = V.replicate (n + 1) Z
   , mUpMemory = V.replicate (n + 1) Z
   , mUpdated = []
+  , mSubMem = map (\n -> replicate (n + 1) Z) submem
+  , mSubDes = map (\n -> replicate (n + 1) Z) subdes
   }
 
 clearUpdated :: (MemoryLike a) => Memory a -> Memory a
