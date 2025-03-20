@@ -18,6 +18,7 @@ module Memory
     BVE(..),
     Bit,
     bit,
+    stageUpdates,
     -- mkBitVector,
     -- bitView,
     -- bitVector,
@@ -81,7 +82,10 @@ module Memory
 where
 
 import Prelude hiding (not, or, and, all, (!!))
--- import Data.List (foldl1', find, sortBy)
+
+import Control.Arrow (second)
+
+import Data.List (foldl1', find, sortBy)
 -- import qualified Data.List as L
 
 import Data.Vector (Vector)
@@ -203,7 +207,7 @@ bitString :: String -> BitA
 bitString s = V.fromList bits
   where bits = reverse $ map bit s
 
-data Edge = Rising | Falling deriving Show
+data Edge = Rising | Falling | Other Bit deriving Show
 
 bvLength :: BitVector -> Int
 bvLength (BitVector bv _) = length bv
@@ -223,16 +227,27 @@ instance MemoryLike IntMap where
 data (MemoryLike a) => Memory a =
   Memory
   { mMemory :: a Bit
+  , mUpMemory :: a Bit
   , mUpdated :: [[(Int, Edge)]]
   }
 
-deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
+stageUpdates :: (MemoryLike a) => Memory a -> Memory a
+stageUpdates unstaged@Memory{..} = unstaged{mMemory = newMemory, mUpMemory = newMemory}
+  where
+    newMemory = update patch mMemory
 
--- instance (Show (c Int)) => Show (Memory c)
+    patch = sortBy (compare `on` fst) $ concatMap (map (second fromEdge)) mUpdated
+
+    fromEdge Rising = H
+    fromEdge Falling = L
+    fromEdge (Other b) = b
+
+deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
 empty :: Int -> Memory Vector
 empty n = Memory
   { mMemory = V.replicate (n + 1) Z
+  , mUpMemory = V.replicate (n + 1) Z
   , mUpdated = []
   }
 
@@ -241,19 +256,19 @@ clearUpdated mem = mem{mUpdated=[]}
 
 (//) :: (MemoryLike a) => Memory a -> (BitVector, BitA) -> Memory a
 (//) m@(Memory {..}) (BitVector bv _, bits) =
-  let patch = catMaybes $ zipWith (\case (W i) -> \j -> Just (i, j); (B _) -> const Nothing) bv (V.toList bits)
-      memory' = update patch mMemory
+  let patch = sortBy (compare `on` fst) . catMaybes $ zipWith (\case (W i) -> \j -> Just (i, j); (B _) -> const Nothing) bv (V.toList bits)
+      memory' = update patch mUpMemory
       changed = mapMaybe (\i -> (i ,) <$> maybeEdge (mMemory !! i) (memory' !! i)) $ wires bv
-  in m{ mMemory = memory'
-      , mUpdated = changed : mUpdated
+  in m{ mUpMemory = memory'
+      , mUpdated = mUpdated ++ [changed]
       }
   where
     maybeEdge :: Bit -> Bit -> Maybe Edge
-    maybeEdge H H = Nothing
     maybeEdge _ H = Just Rising
-    maybeEdge L L = Nothing
     maybeEdge _ L = Just Falling
-    maybeEdge _ _ = Nothing
+    maybeEdge a b
+      | a /= b = Just (Other b)
+      | otherwise = Nothing
 
 (!) :: MemoryLike a => Memory a -> BitVector -> BitA
 (!) (Memory {mMemory=mem}) (BitVector bv _) = V.fromList $ map (\case B b -> b; W w -> mem !! w) bv

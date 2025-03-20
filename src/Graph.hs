@@ -52,7 +52,7 @@ maybeTyple :: (Maybe a, b) -> Maybe (a, b)
 maybeTyple (Just a, b) = Just (a, b)
 maybeTyple (Nothing, _) = Nothing
 
-newtype Node = Node (Memory IntMap -> Memory IntMap, [Int], [Int])
+newtype Node = Node (Memory Vector -> Memory Vector, [Int], [Int])
 
 inputs :: Node -> [Int]
 inputs (Node (_, ins, _)) = ins
@@ -389,25 +389,9 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
         influencedNodesInds = L.nub $ concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) ups
         influencedNodes = map (dNodes L.!!) influencedNodesInds
 
-        newMem = melt oldMem $ map (\(Node (f, ins, outs)) -> (, outs) $ f $ freeze oldMem (ins ++ outs)) influencedNodes
-
-        freeze :: Memory Vector -> [Int] -> Memory IntMap
-        freeze mem@Memory{..} freezeInds = Memory
-          { mMemory=IntMap.fromList $ map (id &&& (mMemory !!)) freezeInds
-          , mUpdated=[ups] }
-
-        melt :: Memory Vector -> [(Memory IntMap, [Int])] -> Memory Vector
-        melt (Memory{mMemory=origMem}) cellMem = Memory
-          -- Potential optimization. What is more efficient traverse `origMem` $n$ times, or sort $n$ lists shorter than `origMem`
-          -- { mMemory = foldl (\om p -> patch p (zip [0,1..] om)) origMem (map (IntMap.toAscList . mMemory) cellMem)
-          { mMemory = origMem V.// cellMemPatch
-          -- Tail is needed to cut the first processed update
-          , mUpdated = concatMap (init' . mUpdated . fst) cellMem }
-          where
-            cellMemPatch = L.sortBy (compare `on` fst) $ concatMap (\(m, i) -> map (id &&& (IntMap.!) (mMemory m)) i) cellMem
-
-            init' [] = []
-            init' l = init l
+        runningMem = stageUpdates oldMem
+        endMem@Memory{mUpdated=newUpdates} = L.foldl' (\mem (Node (f, _, _)) -> f mem) runningMem influencedNodes
+        newMem = endMem{mUpdated=drop (length updates) newUpdates}
 
 eval :: Design -> Design
 eval d@Design{dMemory=Memory{mUpdated=[]}} = d
