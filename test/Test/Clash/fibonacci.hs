@@ -7,7 +7,7 @@ import Clash.Explicit.Testbench
 import Clash.CoSim.Yosys
 
 topEntity :: KnownDomain dom => Clock dom -> Reset dom -> Enable dom -> Signal dom (Unsigned 64)
-topEntity clk rst en = fmap unpack ($(externalComponentE "topEntity" "test/verilog/fibonacci.v") clk rst en)
+topEntity clk rst en = fmap unpack $ $(externalComponentE "test/verilog/fibonacci.v" defaultOptions) clk rst en
 
 testBench :: Signal System Bool
 testBench = done

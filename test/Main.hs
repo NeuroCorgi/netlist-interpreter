@@ -3,6 +3,7 @@ import Test.Tasty.HUnit
 
 import Test.Clash.Fibonacci
 import Test.Clash.BlockRam
+import Test.Clash.FindIndex
 
 tests :: TestTree
 tests = testGroup ""

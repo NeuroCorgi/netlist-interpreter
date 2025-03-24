@@ -17,7 +17,7 @@ topEntity
   -> Signal dom (Unsigned 2)
   -> Signal dom (Maybe (Unsigned 2, Unsigned 4))
   -> Signal dom (Unsigned 4, Unsigned 4)
-topEntity clk en rd wrM = fmap (both unpack) ($(externalComponentE "topEntity" "test/verilog/blockRam.v") clk en (fmap pack wrM) (fmap pack rd))
+topEntity clk en rd wrM = fmap (both unpack) ($(externalComponentE "test/verilog/blockRam.v" defaultOptions) clk en (fmap pack wrM) (fmap pack rd))
   where both f (x, y) = (f x, f y)
 
 samples =

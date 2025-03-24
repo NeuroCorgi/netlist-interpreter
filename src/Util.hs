@@ -12,6 +12,7 @@ import Database.SQLite.Simple
 import Data.Char ( isSpace )
 import Data.Hashable ( hash )
 import Data.String ( fromString )
+import Data.List ( intercalate )
 import Data.Either.Extra ( fromRight' )
 
 import qualified Json
@@ -48,8 +49,17 @@ lookupCache filePath = do
   close conn
   return cachePath'
 
-readDesign :: FilePath -> String -> IO Intermediate.Module
-readDesign filePath topLevelName = do
+-- | Reads design from a verilog file
+-- if the file had been already processed and it is in cache, reads from cache
+readDesign ::
+  FilePath ->
+  -- ^ Path to the verilog file
+  String ->
+  -- ^ Name of the top level entity
+  [(String, String)] ->
+  -- ^ Module parameters
+  IO Intermediate.Module
+readDesign filePath topLevelName parameters = do
   cachedFilePath <- lookupCache filePath
   jsonDesign <- case cachedFilePath of
     Left path -> do
@@ -59,7 +69,7 @@ readDesign filePath topLevelName = do
         --TODO: fix this by not writing to the database until it is known that the json is correctly created
         _exitCode <- withFile logPath WriteMode
           (\hOut -> do
-              (_, _, _, ph) <- createProcess (proc "yosys" [filePath, "-p", "hierarchy -top " ++ topLevelName ++ "; prep; proc; flatten; memory_map; opt; write_json \"" ++ path ++ "\""])
+              (_, _, _, ph) <- createProcess (proc "yosys" [filePath, "-p", yosysCommand path])
                                { std_out = UseHandle hOut
                                , std_err = UseHandle hOut }
               return ph)
@@ -73,6 +83,24 @@ readDesign filePath topLevelName = do
     Right path -> do
       fromString <$> withFile path ReadMode hGetContents'
   liftEither $ (Intermediate.select topLevelName . Intermediate.ofJson) =<< Json.parseModule jsonDesign
+  where
+    -- This is a user and the user only facing side,
+    -- and nobody is going to exploit the absence of escaping on themselves, right?
+    --TODO: proper escaping
+    yosysCommand path = intercalate "; "
+      [ "hierarchy -top " ++ topLevelName
+      , "prep"
+      , setParameters
+      , "proc"
+      , "flatten"
+      , "memory_map"
+      , "opt"
+      , "write_json \"" ++ path ++ "\""
+      ]
+
+    setParameters = intercalate "; " $ map (\(param, value) -> "setparam -set " ++ param ++ " \"" ++ value ++ "\"") parameters
 
 compile :: Intermediate.Module -> Compile.Design
+--TODO: if the module was read, it compile to design without any errors
+-- this is not the sace now, yet
 compile = fromRight' . Compile.compile

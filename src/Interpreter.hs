@@ -5,7 +5,19 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Interpreter where
+module Interpreter
+  (
+  -- * Creation
+    Design
+  , compile
+  -- * Execution
+  , start
+  , step
+  , eval
+  , exec
+  , peek
+  )
+where
 
 import Prelude hiding ((!!))
 
@@ -20,11 +32,7 @@ import qualified Data.Map as Map
 import Data.Maybe (mapMaybe)
 import qualified Data.Maybe as Maybe
 
-import Data.IntMap (IntMap)
-import qualified Data.IntMap as IntMap
-
 import Data.Tuple (swap)
-import Data.Function (on)
 
 import Intermediate
 import Memory
@@ -47,7 +55,9 @@ instance Show Design where
   show Design{..} =
     "Design{ins=[" ++ show dIns ++ "], outs=[" ++ show dOuts ++ "], update_map=" ++ show dUpdateMap ++ ", memory=" ++ show dMemory ++ "}"
 
+-- | Compiles a module into an evaluatable design
 compile :: Module -> Either String Design
+--TODO: this should not fail, as it's called 
 compile topLevel@Module{modCells=cells, modInputs=inputs, modOutputs=outputs, modNetnames=netnames} = do
   (nodes, submem, subdes) <- state
   -- a map of wires causing updates to nodes.
@@ -74,6 +84,7 @@ compile topLevel@Module{modCells=cells, modInputs=inputs, modOutputs=outputs, mo
     ins = map (pName &&& (toBitVector . pBits)) inputs
     outs = map (pName &&& (toBitVector . pBits)) outputs
 
+-- | Steps through one update cycle, propagates current updates, gets new updates, but does not yet evaluates them
 step :: Design -> Design
 --TODO: maximum amount of steps?
 step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
@@ -95,7 +106,7 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
         endMem@Memory{mUpdated=newUpdates} = L.foldl' (\mem (Node (f, _, _)) -> f mem) runningMem influencedNodes
         newMem = endMem{mUpdated=drop (length updates) newUpdates}
 
--- | Evaluates a design in whatever state it might currently be
+-- | Evaluates a design in whatever state it might currently be until there are no more updates left
 eval :: Design -> Design
 -- evaluates till there are no more updates left
 -- let's hope that it always terminates
@@ -107,28 +118,29 @@ eval d = eval . step $ d
 start ::
   Design ->
   -- ^ Design to set inputs in
-  Map String Integer
-  -- ^ Map of inputs to set. Keys are name of the inputs, values are values and are converted to bitvectors internally
+  Map String (Vector Bit)
+  -- ^ Map of inputs to set
   -> Design
   -- ^ A new design with new inputs set
 start d@Design {dMemory=mem, dIns} state =
   let inits = Maybe.mapMaybe (swap <.> maybeTyple . first (`Map.lookup` state)) dIns
-      memory' = L.foldl' (\m (a, n) -> m // (a, extend (bvLength a) $ fromInt n)) mem inits
+      memory' = L.foldl' (\m (a, n) -> m // (a, extend (bvLength a) n)) mem inits
   in
       d {dMemory = memory'}
 
 -- | Probe output values at the current state of the design
 peek ::
   Design ->
-  Map String (Maybe Integer)
-  -- ^ `Nothing` for an output represent presence of undefined or high-impedence bits in the output bitvector
-peek Design{dMemory, dOuts} = Map.fromList $ map (second (toInt . (dMemory !))) dOuts
+  Map String (Vector Bit)
+peek Design{dMemory, dOuts} = Map.fromList $ map (second (dMemory !)) dOuts
 
 -- | Given the inputs, gets the outputs of the design.
 --   To get resulting state of the design, see `start` and `eval`
 exec ::
   Design ->
-  Map String Integer ->
-  Map String (Maybe Integer)
+  -- ^ Initial state of the design to set inputs in
+  Map String (Vector Bit) ->
+  -- ^ See `start` for more information about inputs
+  Map String (Vector Bit)
   -- ^ See `peek` for more information about outputs
 exec = ((peek . eval) .) . start -- B1 or blackbird

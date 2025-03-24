@@ -17,7 +17,7 @@ module Memory
     clearUpdated,
     BitVector(..),
     BVE(..),
-    Bit,
+    Bit(..),
     bit,
     stageUpdates,
     -- mkBitVector,
