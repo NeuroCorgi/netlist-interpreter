@@ -10,6 +10,7 @@ module Clash.CoSim.Yosys
   ( externalComponent
   , externalComponentE
   , defaultOptions
+  , ModuleOptions(..)
   , tick
   , toVectorBit
   , fromVectorBit
@@ -43,7 +44,7 @@ import Clash.Sized.Internal.BitVector (BitVector(..))
 import qualified Clash.Signal (KnownDomain, Signal, Clock, Reset, Enable, fromEnable, unsafeToActiveHigh)
 import qualified Clash.Sized.BitVector (BitVector)
 
-import GHC.Num (Natural, integerToNatural)
+import GHC.Num (integerToNatural)
 import GHC.Natural (naturalToInteger)
 
 import qualified Intermediate as I
@@ -115,9 +116,6 @@ fromVectorBit vect = let (mask, nat) = toNatPair vect in BV { unsafeMask = mask,
 compile :: I.Module -> C.Design
 compile = U.compile
 
-compile' :: C.Design
-compile' = fromRight' $ Left ""
-
 peek :: C.Design -> Map.Map String (Vector M.Bit)
 peek = C.peek
 
@@ -132,12 +130,18 @@ maybeFromJust = fromJust
 ---
 
 data ModuleOptions = ModuleOptions
-  { topEntity :: String
+  { topEntityName :: String
+  -- ^ Name of the top level entity in the design file
   , parameters :: [(String, String)]
+  -- ^ Parameters to set for the module.
+  -- The first element of a tuple is a name of a parameter, the second is a value.
+  -- If the value of the parameter is a string, add escaped quotes at the beggining and the end of the string `[("param_name", "\"value\"")]`
+  , ignoreCache :: Bool
+  -- ^ Ignore cache and run yosys again
   }
 
 defaultOptions :: ModuleOptions
-defaultOptions = ModuleOptions { topEntity = "topEntity", parameters = [] }
+defaultOptions = ModuleOptions { topEntityName = "topEntity", parameters = [], ignoreCache = False }
 
 {- | Instantiates the provided verilog design.
 
@@ -165,16 +169,16 @@ endmodule
 ```
 ,
 ```haskell
-$( externalModule "synch.v" defaultOptions{ topLevel="foo" } )
+$( externalModule "synch.v" defaultOptions{ topEntityName="foo" } )
 ```
 would have type signature like this
 ```haskell
-topLevel :: Clash.Signal.KnownDomain dom => Clash.Signal.Clock dom -> Clash.Signal.Enable dom -> Clash.Signal.Signal dom (Clash.Sized.BitVector 4) -> Clash.Signal.Signal dom (Clash.Sized.BitVector 1)
+foo :: Clash.Signal.KnownDomain dom => Clash.Signal.Clock dom -> Clash.Signal.Enable dom -> Clash.Signal.Signal dom (Clash.Sized.BitVector 4) -> Clash.Signal.Signal dom (Clash.Sized.BitVector 1)
 ```
 
 And with "test.v" being
 ```verilog
-module topLevel(a, b, c);
+module topEntity(a, b, c);
   input  [1:0] a;
   input        b;
   output [2:0] c;
@@ -190,7 +194,7 @@ $( externalModule "test.v" defaultOptions )
 ```
 would have type signature like this
 ```haskell
-topLevel :: Clash.Sized.BitVector 2 -> Clash.Sized.BitVector 1 -> Clash.Sized.BitVector 3
+topEntity :: Clash.Sized.BitVector 2 -> Clash.Sized.BitVector 1 -> Clash.Sized.BitVector 3
 ```
 
 -}
@@ -198,23 +202,22 @@ externalComponent ::
   FilePath ->
   -- ^ Path to the verilog design file
   ModuleOptions ->
-  -- ^ Top level entity name
+  -- ^ Options
   Q [Dec]
-externalComponent filePath ModuleOptions{topEntity=topLevelName, parameters=moduleParameters} = do
+externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=moduleParameters, ignoreCache=readFromCache} = do
   -- Only the first element, which is a topLevel of the design, is of interesest
   -- as only its inputs and outputs are exposed
-  topLevel <- runIO $ U.readDesign filePath topLevelName moduleParameters
+  topLevel <- runIO $ U.readDesign filePath (not readFromCache) topLevelName moduleParameters
   let name = mkName $ I.modName topLevel
       markedInputs = markInputs topLevel
       markedOutputs = map (, Other) $ I.modOutputs topLevel
-      clockName = List.find ((== Clock) . snd) markedInputs
+      maybeClockName = List.find ((== Clock) . snd) markedInputs
       init = mkName "initState"
       initD = valD (varP init) (normalB [| compile $(liftData topLevel) |]) []
-      -- initD = valD (varP init) (normalB [| compile' |]) []
   noinlineAnn <- pragInlD name NoInline FunLike AllPhases
   hasBlackBoxAnn <- pragAnnD (ValueAnnotation name) [| (HasBlackBox [] ()) |]
   -- If there is something that resembles clock signal, then consider the design synchronous
-  case clockName of
+  case maybeClockName of
     -- clock name is needed to tick it during update, separately from all other inputs
     Just clockName -> do
       let dom = mkName "dom"
@@ -273,12 +276,12 @@ externalComponent filePath ModuleOptions{topEntity=topLevelName, parameters=modu
     makeUnmapping out outputs = tupE $ map (makeSingleUnmap out) outputs
     makeSingleUnmap out output = [| fromVectorBit (mapLookup $out $(liftString $ I.pName output)) |]
 
-{- | Same as `externalComponent` but an expression, so ports can be easily packed and unpacked for use
+{- | Same as `externalComponent` but an expression, so inputs can be easily packed and unpacked for use
 
 Continuing the second example from `externalComponent`,
 ```haskell
 foo :: Unsigned 2 -> Bit -> Unsigned 3
-foo a b = unpack $ $(externalComponentE "test.v" def) (pack a) (pack b)
+foo a b = unpack $ $( externalComponentE "test.v" defaultOptions ) (pack a) (pack b)
 ```
 
 -}
@@ -286,7 +289,7 @@ externalComponentE ::
   FilePath ->
   -- ^ Path to the verilog design
   ModuleOptions ->
-  -- ^ Top level entity name
+  -- ^ Options
   Q Exp
 externalComponentE filePath modOptions = do
   decs@(SigD name _ : _) <- externalComponent filePath modOptions

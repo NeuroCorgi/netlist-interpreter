@@ -34,9 +34,10 @@ sanitize ('/' : rest) = '.' : sanitize rest
 sanitize (c : rest) = c : sanitize rest
 sanitize [] = []
 
-lookupCache :: FilePath -> IO (Either FilePath FilePath)
-lookupCache filePath = do
-  fileHash <- withFile filePath ReadMode ((hash . filter (not . isSpace)) <.> hGetContents')
+lookupCache :: FilePath -> [(String, String)] -> IO (Either FilePath FilePath)
+lookupCache filePath parameters = do
+  let params = intercalate "," $ map (\(param, value) -> param ++ ":" ++ value) parameters
+  fileHash <- withFile filePath ReadMode ((hash . (params ++) . filter (not . isSpace)) <.> hGetContents')
   conn <- open "designs/cache.db"
   execute_ conn "CREATE TABLE IF NOT EXISTS designs (hash INTEGER PRIMARY KEY, filePath TEXT)"
   r <- query conn "SELECT filePath FROM designs WHERE hash = ?" [fileHash :: Int]
@@ -50,17 +51,19 @@ lookupCache filePath = do
   return cachePath'
 
 -- | Reads design from a verilog file
--- if the file had been already processed and it is in cache, reads from cache
 readDesign ::
   FilePath ->
   -- ^ Path to the verilog file
+  Bool ->
+  -- ^ Use cached result if present
   String ->
   -- ^ Name of the top level entity
   [(String, String)] ->
   -- ^ Module parameters
   IO Intermediate.Module
-readDesign filePath topLevelName parameters = do
-  cachedFilePath <- lookupCache filePath
+readDesign filePath useCache topLevelName parameters = do
+  cachedFilePath <- if useCache then lookupCache filePath parameters else
+                      Left <$> emptyTempFile "designs" (sanitize filePath ++ ".json")
   jsonDesign <- case cachedFilePath of
     Left path -> do
       let logPath = path ++ ".log"
@@ -98,7 +101,7 @@ readDesign filePath topLevelName parameters = do
       , "write_json \"" ++ path ++ "\""
       ]
 
-    setParameters = intercalate "; " $ map (\(param, value) -> "setparam -set " ++ param ++ " \"" ++ value ++ "\"") parameters
+    setParameters = intercalate "; " $ map (\(param, value) -> "chparam -set " ++ param ++ " " ++ value) parameters
 
 compile :: Intermediate.Module -> Compile.Design
 --TODO: if the module was read, it compile to design without any errors

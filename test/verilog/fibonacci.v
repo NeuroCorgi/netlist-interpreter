@@ -4,25 +4,27 @@
 `default_nettype none
 `timescale 100fs/100fs
 module topEntity
+  #( parameter width = 64
+	)
     ( // Inputs
       input wire  eta // clock
     , input wire  eta1 // reset
     , input wire  eta2 // enable
 
       // Outputs
-    , output wire [63:0] result
+    , output wire [width - 1:0] result
     );
-  wire [63:0] c$result_rec;
-  reg [63:0] c$app_arg = 64'd0;
-  reg [63:0] c$app_arg_0 = 64'd0;
-  reg [63:0] c$app_arg_1 = 64'd1;
+    wire [width - 1:0] c$result_rec;
+  reg [width - 1:0] c$app_arg = 1'd0;
+  reg [width - 1:0] c$app_arg_0 = 1'd0;
+  reg [width - 1:0] c$app_arg_1 = 1'd1;
 
   assign c$result_rec = c$app_arg_1 + c$app_arg;
 
   // register begin
   always @(posedge eta or  posedge  eta1) begin : c$app_arg_register
     if ( eta1) begin
-      c$app_arg <= 64'd0;
+      c$app_arg <= 1'd0;
     end else if (eta2) begin
       c$app_arg <= c$app_arg_0;
     end
@@ -32,7 +34,7 @@ module topEntity
   // register begin
   always @(posedge eta or  posedge  eta1) begin : c$app_arg_0_register
     if ( eta1) begin
-      c$app_arg_0 <= 64'd0;
+      c$app_arg_0 <= 1'd0;
     end else if (eta2) begin
       c$app_arg_0 <= c$result_rec;
     end
@@ -42,7 +44,7 @@ module topEntity
   // register begin
   always @(posedge eta or  posedge  eta1) begin : c$app_arg_1_register
     if ( eta1) begin
-      c$app_arg_1 <= 64'd1;
+      c$app_arg_1 <= 1'd1;
     end else if (eta2) begin
       c$app_arg_1 <= c$result_rec;
     end
