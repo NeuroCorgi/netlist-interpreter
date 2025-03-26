@@ -49,14 +49,6 @@ data Kind
   | Dff
   | Dffe
   | Sdff
-  | Mem
-  | MemV2
-  | Meminit
-  | MeminitV2
-  | Memrd
-  | MemrdV2
-  | Memwr
-  | MemwrV2
   | SubDesign String
   deriving (Data, Typeable)
 
@@ -104,14 +96,6 @@ fromString "$aldffe" = Aldffe
 fromString "$dff" = Dff
 fromString "$dffe" = Dffe
 fromString "$sdff" = Sdff
-fromString "$mem" = Mem
-fromString "$mem_v2" = MemV2
-fromString "$meminit" = Meminit
-fromString "$meminit_v2" = MeminitV2
-fromString "$memrd" = Memrd
-fromString "$memrd_v2" = MemrdV2
-fromString "$memwr" = Memwr
-fromString "$memwr_v2" = MemwrV2
 fromString other = SubDesign other
 
 hasClock :: Kind -> Bool

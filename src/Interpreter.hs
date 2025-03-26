@@ -39,6 +39,8 @@ import Memory
 import Interpreter.Node
 import Interpreter.CompState
 
+import Internal.Util
+
 maybeTyple :: (Maybe a, b) -> Maybe (a, b)
 maybeTyple (Just a, b) = Just (a, b)
 maybeTyple (Nothing, _) = Nothing

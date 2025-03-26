@@ -15,18 +15,13 @@ import qualified Data.List as L
 import Data.IntMap (IntMap)
 import Data.Foldable (foldlM)
 
+import Internal.Util
+
 import Interpreter.CompState
 
 import Memory
 import Intermediate (Cell(..), Direction(..))
 import Intermediate.CellKinds
-
-infixr 9 <.>
-(<.>) :: (Functor m) => (b -> c) -> (a -> m b) -> (a -> m c)
-(<.>) f g x = f <$> g x
-
-both :: (a -> b) -> (a, a) -> (b, b)
-both f (x, y) = (f x, f y)
 
 
 newtype Node = Node (Memory Vector -> Memory Vector, [Int], [Int])
@@ -314,4 +309,7 @@ ofCell subDesignMap Cell {..} =
       y <- validateWidth y_width =<< lookup' "Y" outs
       return (wires a, wires b, wires y, toBitVector (a, a_signed), toBitVector (b, b_signed), toBitVector y)
 
-    (ins, outs) = both M.fromList . L.partition ((fromMaybe False . (== Input) <.> (`M.lookup` cPortDirections)) . fst) $ M.toList cConnections
+    ins = cInputs
+    outs = cOutputs
+
+    -- (ins, outs) = both M.fromList . L.partition ((fromMaybe False . (== Input) <.> (`M.lookup` cPortDirections)) . fst) $ M.toList cConnections

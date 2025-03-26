@@ -52,7 +52,7 @@ instance FromJSON Q where
       Nothing -> empty
   parseJSON _ = empty
 
-data Direction = Input | Output | InOut
+data Direction = Input | Output | InOut deriving Eq
 
 instance FromJSON Direction where
   parseJSON (String dir) =
@@ -72,18 +72,19 @@ instance FromJSON a => FromJSON (Assoc a) where
 data Port = Port
   { jsonPortDirection :: Direction
   , jsonPortBits      :: [Q]
-  , jsonPortOffset    :: Maybe Int
+  -- Those ports are not used, and, therefore, not needed
+  -- jsonPortOffset    :: Maybe Int
   -- There is also `upto` field, but it is useless as bits are already correctly arranged
-  , jsonPortSigned    :: Maybe Int
+  -- jsonPortSigned    :: Maybe Int
   }
 $( deriveFromJSON defaultOptions{ fieldLabelModifier=map toLower . drop 8 } 'Port )
 
 data Net = Net
   { jsonNetBits       :: [Q]
-  , jsonNetOffset     :: Maybe Int
   , jsonNetAttributes :: AttrMap
+  -- jsonNetOffset     :: Maybe Int
   -- upto
-  , jsonNetSigned     :: Maybe Int
+  -- jsonNetSigned     :: Maybe Int
   }
 $( deriveFromJSON defaultOptions{ fieldLabelModifier=map toLower . drop 7 } 'Net )
 

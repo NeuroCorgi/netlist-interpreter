@@ -1,6 +1,7 @@
 module Test.Clash.Fibonacci where
 
 import Prelude hiding (not)
+module Test.Clash.Fibonacci where
 
 import Clash.Prelude
 import Clash.Explicit.Testbench

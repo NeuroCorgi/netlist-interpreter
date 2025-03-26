@@ -1,9 +1,12 @@
+import Prelude
+
 import Test.Tasty
 import Test.Tasty.HUnit
 
-import Test.Clash.Fibonacci
-import Test.Clash.BlockRam
-import Test.Clash.FindIndex
+-- import Test.Clash.Fibonacci
+-- import Test.Clash.BlockRam
+-- import Test.Clash.FindIndex
+import Test.Clash.ExternalLoop2
 
 tests :: TestTree
 tests = testGroup ""

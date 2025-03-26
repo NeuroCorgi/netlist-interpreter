@@ -5,6 +5,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Clash.CoSim.Yosys
   ( externalComponent
@@ -27,33 +28,27 @@ where
 import Language.Haskell.TH hiding (Role)
 import Language.Haskell.TH.Syntax (liftString, liftData)
 
-import Data.Maybe (mapMaybe, fromJust)
-import Data.Either.Extra (fromRight')
+import Data.Maybe (fromJust)
 import qualified Data.Map as Map (Map, fromList, lookup, (!))
-import qualified Data.List as List (nub, partition, find)
+import qualified Data.List as List
 
 import Data.Vector (Vector)
-import qualified Data.Vector as Vector (fromList)
-
-import Data.Function (on)
 
 import Clash.Annotations.Primitive (PrimitiveGuard(HasBlackBox))
 import Clash.Prelude (pack)
 import Clash.Signal.Internal (Signal((:-)))
-import Clash.Sized.Internal.BitVector (BitVector(..))
 import qualified Clash.Signal (KnownDomain, Signal, Clock, Reset, Enable, fromEnable, unsafeToActiveHigh)
 import qualified Clash.Sized.BitVector (BitVector)
-
-import GHC.Num (integerToNatural)
-import GHC.Natural (naturalToInteger)
 
 import qualified Intermediate as I
 import qualified Memory as M
 import qualified Interpreter as C
 import qualified Util as U
 
-both :: (a -> b) -> (a, a) -> (b, b)
-both f (x, y) = (f x, f y)
+import Internal.Util
+
+import Clash.CoSim.Yosys.Internal
+import Clash.CoSim.Yosys.Util
 
 -- | Tick one clock cycle in an asynchronous design
 tick ::
@@ -75,40 +70,6 @@ tick clockName state ins =
     (out, C.eval $ put (Map.fromList [(clockName, [ M.L ])]) state')
   where
     put = flip C.start
-
-toVectorBit :: BitVector n -> Vector M.Bit
-toVectorBit (BV mask nat) = Vector.fromList $ map from $ ((zipLongest False) `on` (bits . naturalToInteger)) mask nat
-  where
-    from (True, True) = M.X
-    from (True, False) = M.Z
-    from (False, True) = M.H
-    from (False, False) = M.L
-
-bits :: Integer -> [Bool]
-bits 0 = []
-bits n
-  | even n = False : bits nn
-  | odd n = True : bits nn
-  where nn = n `div` 2
-
-zipLongest :: a -> [a] -> [a] -> [(a, a)]
-zipLongest _ [] [] = []
-zipLongest d [] (a : rest) = (d, a) : zipLongest d [] rest
-zipLongest d (a : rest) [] = (a, d) : zipLongest d rest []
-zipLongest d (a : as) (b : bs) = (a, b) : zipLongest d as bs
-
-fromVectorBit :: Vector M.Bit -> BitVector n
-fromVectorBit vect = let (mask, nat) = toNatPair vect in BV { unsafeMask = mask, unsafeToNatural = nat }
-  where
-    toNatPair vect = both integerToNatural $ foldr (\b (mask', value) -> (2 * mask' + mask b, 2 * value + val b)) (0 :: Integer, 0 :: Integer) vect
-      where
-        val M.H = 1
-        val M.L = 0
-        val _   = 0
-
-        mask M.Z = 1
-        mask M.X = 1
-        mask _ = 0
 
 ---
 -- Just wrapper functions to use in Template Haskell splice
@@ -138,10 +99,17 @@ data ModuleOptions = ModuleOptions
   -- If the value of the parameter is a string, add escaped quotes at the beggining and the end of the string `[("param_name", "\"value\"")]`
   , ignoreCache :: Bool
   -- ^ Ignore cache and run yosys again
+  , nonCombinatorialInputs :: [String]
+  -- ^ Input ports that are known to not depend on the outputs of the design
+  -- Default non-combinatorial inputs are clock and reset signals
   }
 
 defaultOptions :: ModuleOptions
-defaultOptions = ModuleOptions { topEntityName = "topEntity", parameters = [], ignoreCache = False }
+defaultOptions = ModuleOptions
+  { topEntityName = "topEntity"
+  , parameters = []
+  , ignoreCache = False
+  , nonCombinatorialInputs = [] }
 
 {- | Instantiates the provided verilog design.
 
@@ -204,16 +172,19 @@ externalComponent ::
   ModuleOptions ->
   -- ^ Options
   Q [Dec]
-externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=moduleParameters, ignoreCache=readFromCache} = do
-  -- Only the first element, which is a topLevel of the design, is of interesest
-  -- as only its inputs and outputs are exposed
+externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=moduleParameters, ignoreCache=readFromCache, nonCombinatorialInputs=nonCombIns} = do
   topLevel <- runIO $ U.readDesign filePath (not readFromCache) topLevelName moduleParameters
   let name = mkName $ I.modName topLevel
-      markedInputs = markInputs topLevel
+      markedInputs = markRolesForInputs topLevel
       markedOutputs = map (, Other) $ I.modOutputs topLevel
       maybeClockName = List.find ((== Clock) . snd) markedInputs
-      init = mkName "initState"
+      specialSignalNames = map (I.pName . fst) $ filter ((/= Other) . snd) markedInputs
+      markedCombinatorialGroups = markCombinatorialOutputs topLevel (specialSignalNames ++ nonCombIns)
+      (nonDependent, possiblyCombinatorial) = List.partition ((== NotDependent) . snd) markedCombinatorialGroups
+
+  let init = mkName "initState"
       initD = valD (varP init) (normalB [| compile $(liftData topLevel) |]) []
+
   noinlineAnn <- pragInlD name NoInline FunLike AllPhases
   hasBlackBoxAnn <- pragAnnD (ValueAnnotation name) [| (HasBlackBox [] ()) |]
   -- If there is something that resembles clock signal, then consider the design synchronous
@@ -256,10 +227,12 @@ externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=
          (normalB
            [|
             let
-              mapping = $(makeMapping $ zip (map fst markedInputs) (map (varE . fst) acss))
-              -- There is no clock in an asynchonous design
-              (_, state) = tick "" $(varE init) mapping
-              $(varP out) = peek state
+              -- There is no clock in an asynchonous design, so an empty string is passed to `tick`
+              nonCombinatorialMapping = $(makeMapping [])
+              (_, !nonCombState) = tick "" $(varE init) nonCombinatorialMapping
+              combinatorialMapping = $(makeMapping $ zip (map fst markedInputs) (map (varE . fst) acss))
+              (_, combState) = tick "" nonCombState combinatorialMapping
+              $(varP out) = peek combState
               result = $(makeUnmapping (varE out) $ map fst markedOutputs)
             in
               result
@@ -296,48 +269,6 @@ externalComponentE filePath modOptions = do
   -- Take only the signature and the declaration, as annotations are not allowed in `let`
   letE (map pure $ take 2 decs) (varE name)
 
-data Role
-  = Clock
-  | Reset
-  | Enable
-  | Other
-  deriving Eq
-
-markInputs :: I.Module -> [(I.Port, Role)]
--- Multy domain design with several clock signals?
-markInputs I.Module{I.modInputs, I.modCells} = map mark modInputs
-  where
-    -- Naive guesses for names of ports
-    clock, reset, enable :: [(String -> Bool)]
-    clock = [(== "clk"), (== "clock")]
-    reset = [(== "rst"), (== "arst"), (== "reset")]
-    enable = [(== "en"), (== "enable")]
-
-    mark p@I.Port{I.pName, I.pBits}
-    -- First naive guess by the port name
-      | like clock pName = (p, Clock)
-      | like reset pName = (p, Reset)
-      | like enable pName = (p, Enable)
-    -- Second guess by loking at internal cell inputs
-      | cs == cellClockInputs = (p, Clock)
-      | cs == cellResetInputs = (p, Reset)
-      | cs == cellEnableInputs = (p, Enable)
-      | otherwise = (p, Other)
-      where cs = M.wires pBits
-
-    like f name = or $ f <*> return name
-
-    cellInputs signal = List.nub . concatMap M.wires . mapMaybe (\I.Cell{cConnections} -> Map.lookup signal cConnections)
-    cellClockInputs = cellInputs "CLK" modCells
-    cellResetInputs = cellInputs "ARST" modCells
-    cellEnableInputs = cellInputs "EN" modCells
-
-reorder :: [(a, Role)] -> [(a, Role)]
-reorder lst = clock ++ reset ++ enable ++ rest''
-  where
-    (clock, rest) = List.partition ((== Clock) . snd) lst
-    (reset, rest') = List.partition ((== Reset) . snd) rest
-    (enable, rest'') = List.partition ((== Enable) . snd) rest'
 
 convertPort ::
   Maybe Name ->
@@ -350,7 +281,7 @@ convertPort ::
   --   Type of the signal
 
 -- Clock pattern is useless as its dropped right after
-convertPort (Just d) (I.Port{..}, Clock) = ((varP n), (acs, acs), [t| Clash.Signal.Clock $(varT d) |])
+convertPort (Just d) (I.Port{..}, Clock) = (varP n, (acs, acs), [t| Clash.Signal.Clock $(varT d) |])
   where acs = n
         n = mkName pName
 convertPort (Just d) (I.Port{..}, Reset) =

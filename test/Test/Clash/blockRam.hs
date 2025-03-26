@@ -4,8 +4,6 @@
 
 module Test.Clash.BlockRam where
 
-import Prelude hiding (not, zip, unzip3)
-
 import Clash.Prelude
 import Clash.Explicit.Testbench
 import Clash.CoSim.Yosys

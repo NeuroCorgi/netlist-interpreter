@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE DeriveDataTypeable #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Intermediate
   ( Direction(..)
@@ -21,11 +22,12 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import qualified Data.List as L
 
-import Data.Text (Text)
 import Data.Data (Data)
 
 import qualified Json as J
 import Memory
+
+import Internal.Util
 
 import qualified Intermediate.CellKinds as CellKinds
 
@@ -37,42 +39,29 @@ data Direction = Input | Output | InOut
   deriving (Show, Eq, Data)
 
 data Port = Port
-  { pName :: String,
-    pBits :: [BVE],
-    pOffset :: Int,
-    pSigned :: Bool
+  { pName :: String
+  , pBits :: [BVE]
   } deriving Data
 
 data Net = Net
-  { nBits :: [BVE],
-    nAttributes :: AttrMap,
-    nSigned :: Bool
+  { nBits :: [BVE]
+  , nAttributes :: AttrMap
   } deriving Data
 
 data Cell = Cell
-  { cKind :: CellKinds.Kind,
-    cAttributes :: AttrMap,
-    cParameters :: Map String String,
-    cPortDirections :: Map String Direction,
-    cConnections :: Map String [BVE]
+  { cKind :: CellKinds.Kind
+  , cParameters :: Map String String
+  , cInputs :: Map String [BVE]
+  , cOutputs :: Map String [BVE]
   } deriving Data
 
--- data Memory = Memory
---   { name :: String
---   , attributes :: AttrMap
---   , width :: Int
---   , start_offset :: Int
---   , size :: Int
---   }
-
 data Module = Module
-  { modName :: String,
-    modAttributes :: AttrMap,
-    modInputs :: [Port],
-    modOutputs :: [Port],
-    modCells :: [Cell],
-    -- modMemories :: [Memory]
-    modNetnames :: [Net]
+  { modName :: String
+  , modAttributes :: AttrMap
+  , modInputs :: [Port]
+  , modOutputs :: [Port]
+  , modCells :: [Cell]
+  , modNetnames :: [Net]
   } deriving Data
 
 modMemorySize :: Module -> Int
@@ -93,13 +82,13 @@ ofJson (J.TopLevel mods) = map namedModule $ M.assocs mods
           modAttributes = jsonModAttributes,
           modInputs = map namedPort ins,
           modOutputs = map namedPort outs,
-          modCells = map namedCell $ J.toList jsonModCells,
+          modCells = map (namedCell . snd) $ J.toList jsonModCells,
           -- modMemories = map namedMemo $ Map.assocs $ fromMaybe Map.empty memories
-          modNetnames = map namedNetName $ J.toList jsonModNetnames
+          modNetnames = map (namedNetName . snd) $ J.toList jsonModNetnames
         }
       where
         (ins, outs) = partitionPorts $ J.toList jsonModPorts
-        
+
     partitionPorts :: [(String, J.Port)] -> ([(String, J.Port)], [(String, J.Port)])
     partitionPorts = go [] []
       where
@@ -113,25 +102,23 @@ ofJson (J.TopLevel mods) = map namedModule $ M.assocs mods
     namedPort (name, J.Port {..}) =
       Port
         { pName = name,
-          pBits = map bitWire jsonPortBits,
-          pOffset = fromMaybe 0 jsonPortOffset,
-          pSigned = Just 1 == jsonPortSigned
+          pBits = map bitWire jsonPortBits
         }
 
-    namedCell (name, J.Cell {..}) =
+    namedCell J.Cell {..} =
       Cell
-      { cAttributes = jsonCellAttributes
-      , cKind = CellKinds.fromString jsonCellType
+      { cKind = CellKinds.fromString jsonCellType
       , cParameters = jsonCellParameters
-      , cPortDirections = M.map (\case J.Input -> Input; J.Output -> Output; J.InOut -> InOut) jsonCellPort_Directions
-      , cConnections = M.map (map bitWire) jsonCellConnections
+      , cInputs = ins
+      , cOutputs = outs
       }
+      where
+        (ins, outs) = both (M.map (map bitWire) . M.fromList) . L.partition ((fromMaybe False . (== J.Input) <.> (`M.lookup` jsonCellPort_Directions)) . fst) $ M.toList jsonCellConnections
 
-    namedNetName (name, J.Net {..}) =
+    namedNetName J.Net {..} =
       Net
         { nBits = map bitWire jsonNetBits,
-          nAttributes = jsonNetAttributes,
-          nSigned = Just 1 == jsonNetSigned
+          nAttributes = jsonNetAttributes
         }
 
     bitWire (J.Wire i) = W i
