@@ -4,7 +4,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE BangPatterns #-}
 
 module Clash.CoSim.Yosys
@@ -28,11 +27,16 @@ where
 import Language.Haskell.TH hiding (Role)
 import Language.Haskell.TH.Syntax (liftString, liftData)
 
+import Control.Arrow (first, (&&&))
+import Control.Monad (mapAndUnzipM)
+
+import Data.Traversable (mapAccumM)
 import Data.Maybe (fromJust)
 import qualified Data.Map as Map (Map, fromList, lookup, (!))
 import qualified Data.List as List
 
 import Data.Vector (Vector)
+import qualified Data.Vector as V (singleton)
 
 import Clash.Annotations.Primitive (PrimitiveGuard(HasBlackBox))
 import Clash.Prelude (pack)
@@ -64,12 +68,14 @@ tick clockName state ins =
     -- Read outputs from previous input or from initial setup if it's the first clock cycle
     out = C.peek state
     -- Pull clock down, set all the values, pull clock up
-    state' = C.eval $ put (Map.fromList [(clockName, [ M.H ])]) $ C.eval $ put ins $ C.eval $ put (Map.fromList [(clockName, [ M.L ])]) state
+    state' = C.eval $ put (Map.fromList [(clockName, high)]) $ C.eval $ put ins $ C.eval $ put (Map.fromList [(clockName, low)]) state
   in
     -- Pull clock back down again, just in case
-    (out, C.eval $ put (Map.fromList [(clockName, [ M.L ])]) state')
+    (out, C.eval $ put (Map.fromList [(clockName, low)]) state')
   where
     put = flip C.start
+    high = V.singleton M.H
+    low = V.singleton M.L
 
 ---
 -- Just wrapper functions to use in Template Haskell splice
@@ -179,11 +185,13 @@ externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=
       markedOutputs = map (, Other) $ I.modOutputs topLevel
       maybeClockName = List.find ((== Clock) . snd) markedInputs
       specialSignalNames = map (I.pName . fst) $ filter ((/= Other) . snd) markedInputs
-      markedCombinatorialGroups = markCombinatorialOutputs topLevel (specialSignalNames ++ nonCombIns)
-      (nonDependent, possiblyCombinatorial) = List.partition ((== NotDependent) . snd) markedCombinatorialGroups
+      markedDependentGroups = markDependentOutputs topLevel (specialSignalNames ++ nonCombIns)
+      -- There should be only one non-dependent group
+      --TODO: check if there's truly only one such group?
+      ([nonDependent], dependentGroups) = both uniteDependentGroups $ List.partition ((== NotDependent) . snd) markedDependentGroups
 
-  let init = mkName "initState"
-      initD = valD (varP init) (normalB [| compile $(liftData topLevel) |]) []
+  initStateName <- newName "initState"
+  let initD = valD (varP initStateName) (normalB [| compile $(liftData topLevel) |]) []
 
   noinlineAnn <- pragInlD name NoInline FunLike AllPhases
   hasBlackBoxAnn <- pragAnnD (ValueAnnotation name) [| (HasBlackBox [] ()) |]
@@ -193,61 +201,91 @@ externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=
     Just clockName -> do
       let dom = mkName "dom"
           reorderedInputs = reorder markedInputs
-          (names, acss, argTys) = convertInputs (Just dom) reorderedInputs
+          (inputPatterns, acss, argTys) = convertInputs (Just dom) reorderedInputs
           outTy = convertOutputs (Just dom) markedOutputs
-          state = mkName "state"
-          out = mkName "out"
-          go = mkName "go"
+          inputNameMap = Map.fromList $ zip (map (I.pName . fst) markedInputs) (map fst acss)
+      state <- newName "stau29te"
+      out <- newName "out"
+      go <- newName "go"
+
+      (nonDepOutStateName, nonDepGroupEval) <- do
+        (outputMapName, func) <- evalGroup []
+        pure (map (, outputMapName) (fst nonDependent), func initStateName)
+
+      (depGroupsOutStateNames, depGroupsEval) <- mapAndUnzipM
+        (\(outs, dependencies -> deps) -> do
+            (outputMapName, func) <- evalGroup (map (id &&& (inputNameMap Map.!)) deps)
+            pure (map (, outputMapName) outs, func)
+        ) dependentGroups
+
+      (lastStateName, dependentEval) <- mapAccumM (\prevStateName func -> func prevStateName) initStateName depGroupsEval
+
+      let outStateNameMap = Map.fromList $ map (first I.pName) $ concat (nonDepOutStateName : depGroupsOutStateNames)
       -- `drop 1` in the declaration of `dec` drops the clock signal (which is the first after reordering)
       -- clock signal is not a real signal and is useless for the purpose of design evaluation
       dec <- funD name
-        [clause names (normalB (foldl appE [| $(varE go) $(varE init) |] $ drop 1 $ map (varE . fst) acss) )
+        [clause inputPatterns (normalB (foldl appE [| $(varE go) $(varE initStateName) |] $ drop 1 $ map (varE . fst) acss) )
         -- where
           [ initD
           , funD go
-            [ clause ((varP state) : map ((\(f, s) -> [p| ($f :- $s) |]) . both varP) (drop 1 acss))
+            [ clause ((varP state) : map ((\(f, s) -> [p| ~($f :- $s) |]) . both varP) (drop 1 acss))
               (normalB
                 [|
                   let
-                    mapping = $(makeMapping $ drop 1 $ zip (map fst reorderedInputs) (map (varE . fst) acss))
+                    mapping = $(makeMapping $ drop 1 $ zip (map (I.pName . fst) reorderedInputs) (map fst acss))
                     ($(varP out), state') = tick $(liftString $ I.pName $ fst clockName) $(varE state) mapping
-                    result = $(makeUnmapping (varE out) $ map fst markedOutputs)
+                    result = $(makeUnmapping $ map ((, out) . I.pName . fst) markedOutputs)
                   in
-                    result :- $(foldl appE [| $(varE go) state' |] $ drop 1 $ map (varE . snd) acss)
+                    result :- $(varE lastStateName) `seq` $(foldl appE [| $(varE go) state' |] $ drop 1 $ map (varE . snd) acss)
                  |]) [] ]
           ] ]
-      sig <- sigD name [t| Clash.Signal.KnownDomain $(varT dom) => $(makeArrow argTys outTy) |]
+      sig <- (sigD name [t| Clash.Signal.KnownDomain $(varT dom) => $(makeArrow argTys outTy) |])
       return [sig, dec, noinlineAnn, hasBlackBoxAnn]
     _ -> do
-      let (names, acss, argTys) = convertInputs Nothing markedInputs
+      let (inputPatterns, acss, argTys) = convertInputs Nothing markedInputs
           outTy = convertOutputs Nothing markedOutputs
-          out = mkName "out"
+          inputNameMap = Map.fromList $ zip (map (I.pName . fst) markedInputs) (map fst acss)
+
+      (groupsOutStateNames, groupsEval) <- mapAndUnzipM
+        (\(outs, dependencies -> deps) -> do
+            (outputMapName, func) <- evalGroup (map (id &&& (inputNameMap Map.!)) deps)
+            pure (map (, outputMapName) outs, func)
+        ) (nonDependent : dependentGroups)
+
+      (_, dependentEval) <- mapAccumM (\prevStateName func -> func prevStateName) initStateName groupsEval
+
+      let outStateNameMap = Map.fromList $ map (first I.pName) $ concat groupsOutStateNames
       dec <- funD name
-        [clause names
-         (normalB
-           [|
-            let
-              -- There is no clock in an asynchonous design, so an empty string is passed to `tick`
-              nonCombinatorialMapping = $(makeMapping [])
-              (_, !nonCombState) = tick "" $(varE init) nonCombinatorialMapping
-              combinatorialMapping = $(makeMapping $ zip (map fst markedInputs) (map (varE . fst) acss))
-              (_, combState) = tick "" nonCombState combinatorialMapping
-              $(varP out) = peek combState
-              result = $(makeUnmapping (varE out) $ map fst markedOutputs)
-            in
-              result
-            |])
+        [clause inputPatterns
+         (normalB $
+           letE
+           (map pure $ concat dependentEval )
+           (makeUnmapping (map ((id &&& (outStateNameMap Map.!)) . I.pName . fst) markedOutputs))
+         )
          [ initD ] ]
       sig <- sigD name (makeArrow argTys outTy)
       return [sig, dec, noinlineAnn, hasBlackBoxAnn]
   where
+    evalGroup :: [(String, Name)] -> Q (Name, Name -> Q (Name, [Dec]))
+    evalGroup inputs = do
+      outName <- newName "stateOutput"
+      pure
+        (outName, \prevStateName -> do
+            stateName <- newName "state"
+            (stateName ,) <$>
+              [d|
+                sourceInputs = $(makeMapping inputs)
+                (_, $(varP stateName)) = tick "" $(varE prevStateName) sourceInputs
+                $(varP outName) = peek $(varE stateName)
+                |])
+
     makeArrow argTys retTy = foldr (appT . appT arrowT) retTy argTys
 
-    makeMapping inputs = [| mapFromList $(listE $ map (\(p, a) -> [| ($(liftString $ I.pName p), toVectorBit $a) |]) inputs) |]
+    makeMapping inputs = [| mapFromList $(listE $ map (\(p, a) -> [| ($(liftString p), toVectorBit $(varE a)) |]) inputs) |]
 
-    makeUnmapping out [output] = makeSingleUnmap out output
-    makeUnmapping out outputs = tupE $ map (makeSingleUnmap out) outputs
-    makeSingleUnmap out output = [| fromVectorBit (mapLookup $out $(liftString $ I.pName output)) |]
+    makeUnmapping [output] = makeSingleUnmap output
+    makeUnmapping outputs = tupE $ map makeSingleUnmap outputs
+    makeSingleUnmap (output, out) = [| fromVectorBit (mapLookup $(varE out) $(liftString output)) |]
 
 {- | Same as `externalComponent` but an expression, so inputs can be easily packed and unpacked for use
 
@@ -321,9 +359,10 @@ convertOutputs dom outs
   | otherwise = ty
   where
     -- Discard patterns and accessor names as they are not needed for the output
-    ress = map (\(_, _, c) -> c) $ convertPorts Nothing outs
+    (names, ress) = unzip $ map (\(_, (name, _), c) -> (name, c)) $ convertPorts Nothing outs
 
     -- If there are multiple return values, construct a tuple
     ty = case ress of
+      [] -> tupleT 0 -- unit type
       [single] -> single
       multiple -> foldl appT (tupleT (length multiple)) multiple

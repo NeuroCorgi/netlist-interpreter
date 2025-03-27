@@ -5,8 +5,9 @@ module Clash.CoSim.Yosys.Internal
   , CombDependent(..)
   , markRolesForInputs
   , reorder
-  , markCombinatorialOutputs
-  , uniteCombinatorialGroups
+  , dependencies
+  , markDependentOutputs
+  , uniteDependentGroups
   )
 where
 
@@ -70,7 +71,7 @@ data CombDependent
   deriving Eq
 
 combineGroup :: [CombDependent] -> CombDependent
-combineGroup = foldl1 combine . snd . List.partition (== NotDependent)
+combineGroup = foldl combine NotDependent
 
 combine :: CombDependent -> CombDependent -> CombDependent
 combine a NotDependent = a
@@ -81,22 +82,22 @@ dependencies :: CombDependent -> [String]
 dependencies NotDependent = []
 dependencies (Combinatorial s) = s
 
-uniteCombinatorialGroups :: [(a, CombDependent)] -> [([a], CombDependent)]
-uniteCombinatorialGroups [] = []
-uniteCombinatorialGroups (x : xs) = go (first List.singleton x) xs
+uniteDependentGroups :: [(a, CombDependent)] -> [([a], CombDependent)]
+uniteDependentGroups [] = []
+uniteDependentGroups (x : xs) = go (first List.singleton x) xs
   where
     go only [] = [only]
     go (a, c) xs
       | not $ null group = go this' rest
-      | otherwise = this' : uniteCombinatorialGroups xs
+      | otherwise = this' : uniteDependentGroups xs
       where
         this = dependencies c
         this' = (a ++ as, combineGroup (c : combs))
         (group, rest) = List.partition (not . null . List.intersect this . dependencies . snd) xs
         (as, combs) = unzip group
 
-markCombinatorialOutputs :: Module -> [String] -> [(Port, CombDependent)]
-markCombinatorialOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells} nonCombInputs = map lookupPort outputs
+markDependentOutputs :: Module -> [String] -> [(Port, CombDependent)]
+markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells} nonCombInputs = map lookupPort outputs
   where
     lookupWire :: Int -> IM.IntMap CombDependent -> CombDependent
     lookupWire = (fromMaybe NotDependent .) . IM.lookup
