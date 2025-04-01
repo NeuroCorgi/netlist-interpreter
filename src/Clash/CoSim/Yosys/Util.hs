@@ -1,10 +1,16 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module Clash.CoSim.Yosys.Util
   ( toVectorBit
   , fromVectorBit
   , bits
   , zipLongest
+  , unzipFN
+  , unzipN
   )
 where
+
+import Language.Haskell.TH
 
 import Data.Function (on)
 
@@ -18,6 +24,23 @@ import GHC.Natural (naturalToInteger)
 import Memory (Bit(..))
 
 import Internal.Util
+
+accs :: Int -> Int -> Q Exp
+accs n m = do
+  a <- newName "a"
+  [| \ $(tupP [ if i == m then varP a else wildP | i <- [0..n - 1] ]) -> $(varE a) |]
+
+unzipN :: Int -> Q Exp
+unzip 1 = [| id |]
+unzipN n = do
+  s <- newName "s"
+  [| \ $(varP s) -> $(tupE $ map (\i -> [| $(accs n i) $(varE s) |]) [0..n - 1] ) |]
+
+unzipFN :: Int -> Q Exp
+unzipFN 1 = [| id |]
+unzipFN n = do
+  s <- newName "s"
+  [| \ $(varP s) -> $(tupE $ map (\i -> [| $(accs n i) <$> $(varE s) |]) [0..n - 1] ) |]
 
 toVectorBit :: BitVector n -> Vector Bit
 toVectorBit (BV mask nat) = V.fromList $ map from $ ((zipLongest False) `on` (bits . naturalToInteger)) mask nat

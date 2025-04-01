@@ -5,6 +5,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Clash.CoSim.Yosys
   ( externalComponent
@@ -21,6 +22,9 @@ module Clash.CoSim.Yosys
   , PrimitiveGuard(HasBlackBox)
   , zipLongest
   , bits
+  , high
+  , low
+  , unzipFN
   )
 where
 
@@ -31,9 +35,10 @@ import Control.Arrow (first, (&&&))
 import Control.Monad (mapAndUnzipM)
 
 import Data.Traversable (mapAccumM)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, mapMaybe)
 import qualified Data.Map as Map (Map, fromList, lookup, (!))
 import qualified Data.List as List
+import Data.List.NonEmpty (unfoldr, NonEmpty((:|)))
 
 import Data.Vector (Vector)
 import qualified Data.Vector as V (singleton)
@@ -58,24 +63,25 @@ import Clash.CoSim.Yosys.Util
 tick ::
   String ->
   -- ^ Name of the clock signal in the design
+  Vector M.Bit ->
+  -- ^ Clock polarity to set
   C.Design ->
   -- ^ Evaluatable design
   Map.Map String (Vector M.Bit) ->
   -- ^ Mapping of other inputs to the design
   (Map.Map String (Vector M.Bit), C.Design)
-tick clockName state ins =
+tick clockName clockPol state ins =
   let
-    -- Read outputs from previous input or from initial setup if it's the first clock cycle
-    out = C.peek state
-    -- Pull clock down, set all the values, pull clock up
-    state' = C.eval $ put (Map.fromList [(clockName, high)]) $ C.eval $ put ins $ C.eval $ put (Map.fromList [(clockName, low)]) state
+    state' = C.eval $ put (mapFromList [(clockName, clockPol)]) $ C.eval $ put ins state
+    out = C.peek state'
   in
-    -- Pull clock back down again, just in case
-    (out, C.eval $ put (Map.fromList [(clockName, low)]) state')
+    (out, state')
   where
     put = flip C.start
-    high = V.singleton M.H
-    low = V.singleton M.L
+
+high, low :: Vector M.Bit
+high = V.singleton M.H
+low  = V.singleton M.L
 
 ---
 -- Just wrapper functions to use in Template Haskell splice
@@ -143,7 +149,7 @@ endmodule
 ```
 ,
 ```haskell
-$( externalModule "synch.v" defaultOptions{ topEntityName="foo" } )
+$( externalModule [t| "clk" :: Clock -> "en" :: Enable -> "a" :: Signal (BitVector 4) -> "y" :: Signal (BitVector 1) |] "synch.v" defaultOptions{ topEntityName="foo" } )
 ```
 would have type signature like this
 ```haskell
@@ -164,7 +170,7 @@ endmodule
 ```
 ,
 ```haskell
-$( externalModule "test.v" defaultOptions )
+$( externalModule [t| "a" :: BitVector 2 -> "b" :: BitVector 1 -> "c" :: BitVector 3 |] "test.v" defaultOptions )
 ```
 would have type signature like this
 ```haskell
@@ -172,25 +178,28 @@ topEntity :: Clash.Sized.BitVector 2 -> Clash.Sized.BitVector 1 -> Clash.Sized.B
 ```
 
 -}
-externalComponent ::
-  FilePath ->
+externalComponent
+  :: ([String], [String])
+  -- ^ Type annotation of a component with port names annotations
+  -> FilePath
   -- ^ Path to the verilog design file
-  ModuleOptions ->
+  -> ModuleOptions
   -- ^ Options
-  Q [Dec]
-externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=moduleParameters, ignoreCache=readFromCache, nonCombinatorialInputs=nonCombIns} = do
+  -> Q [Dec]
+externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=topLevelName, parameters=moduleParameters, ignoreCache=readFromCache, nonCombinatorialInputs=nonCombIns} = do
   topLevel <- runIO $ U.readDesign filePath (not readFromCache) topLevelName moduleParameters
+
   let name = mkName $ I.modName topLevel
       markedInputs = markRolesForInputs topLevel
       markedOutputs = map (, Other) $ I.modOutputs topLevel
       maybeClockName = List.find ((== Clock) . snd) markedInputs
       specialSignalNames = map (I.pName . fst) $ filter ((/= Other) . snd) markedInputs
       markedDependentGroups = markDependentOutputs topLevel (specialSignalNames ++ nonCombIns)
-      -- There should be only one non-dependent group
-      --TODO: check if there's truly only one such group?
-      ([nonDependent], dependentGroups) = both uniteDependentGroups $ List.partition ((== NotDependent) . snd) markedDependentGroups
+      (nonDependent, dependentGroups) = both uniteDependentGroups $ List.partition ((== NotDependent) . snd) markedDependentGroups
+      allDependentInputs = concatMap (dependencies . snd) dependentGroups
 
   initStateName <- newName "initState"
+  -- let initD = valD (varP initStateName) (normalB [| undefined |]) []
   let initD = valD (varP initStateName) (normalB [| compile $(liftData topLevel) |]) []
 
   noinlineAnn <- pragInlD name NoInline FunLike AllPhases
@@ -198,69 +207,126 @@ externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=
   -- If there is something that resembles clock signal, then consider the design synchronous
   case maybeClockName of
     -- clock name is needed to tick it during update, separately from all other inputs
-    Just clockName -> do
+    Just (clockPort, _) | let clockName = I.pName clockPort -> do
       let dom = mkName "dom"
-          reorderedInputs = reorder markedInputs
+          reorderedInputs = reorderTo argTyNames markedInputs
+          reorderedOutputs = reorderTo retTyNames markedOutputs
           (inputPatterns, acss, argTys) = convertInputs (Just dom) reorderedInputs
-          outTy = convertOutputs (Just dom) markedOutputs
-          inputNameMap = Map.fromList $ zip (map (I.pName . fst) markedInputs) (map fst acss)
-      state <- newName "stau29te"
-      out <- newName "out"
-      go <- newName "go"
+          outTy = convertOutputs (Just dom) reorderedOutputs
 
-      (nonDepOutStateName, nonDepGroupEval) <- do
-        (outputMapName, func) <- evalGroup []
-        pure (map (, outputMapName) (fst nonDependent), func initStateName)
+          inputNames = map (I.pName . fst) reorderedInputs
+          -- `drop 1` is explained further
+          otherInputs = filter (`notElem` allDependentInputs) $ drop 1 inputNames
 
-      (depGroupsOutStateNames, depGroupsEval) <- mapAndUnzipM
+          inputNameMap = Map.fromList $ zip inputNames (map fst acss)
+      state <- newName "state"
+      goInit <- newName "goInit"
+      goCycle <- newName "goCycle"
+      stateND <- newName "stateND"
+      initOutMap <- newName "initOutMap"
+      risingEdgeOutMap <- newName "risingEdgeOutMap"
+      risingEdgeState <- newName "risingEdgeState"
+      fallingEdgeState <- newName "fallingEdgeState"
+
+      -- Set all inputs that cannot be combinatorial with outputs,
+      -- setting all of them because non combinatorial dependency is not propagated
+      nonDepInputsSet <- [d| (_, $(varP stateND)) = tick "" low $(varE state) $(makeMapping (map (id &&& (inputNameMap Map.!)) otherInputs)) |]
+
+      -- here and next we do not care about map of where to take output from as output would be taken from the rising edge state
+      (_, (nonDepState, nonDepEval)) <- do
+        case nonDependent of
+          [nonDependent] -> do
+            (outputMapName, func) <- evalGroup []
+            (map (, outputMapName) (fst nonDependent) ,) <$> func stateND
+          [] -> pure ([], (stateND, []))
+          _ -> error "should never have more than one non dependent group of outputs"
+
+      (_, depGroupsEval) <- mapAndUnzipM
         (\(outs, dependencies -> deps) -> do
             (outputMapName, func) <- evalGroup (map (id &&& (inputNameMap Map.!)) deps)
             pure (map (, outputMapName) outs, func)
         ) dependentGroups
 
-      (lastStateName, dependentEval) <- mapAccumM (\prevStateName func -> func prevStateName) initStateName depGroupsEval
+      -- They differ in the initial state,
+      -- declarations for the initialisation part takes non dependent evaluation part,
+      -- as initialisation happens before the first clock cycle
+      -- declaration for cycling takes state at the rising edge,
+      -- by that point in time all the inputs should be stable and it should be safe to evaluate possibly combinatorial otputs
+      (lastStateNameInit, dependentEvalInit) <- mapAccumM (\prevStateName func -> func prevStateName) nonDepState depGroupsEval
+      (lastStateNameCycle, dependentEvalCycle) <- mapAccumM (\prevStateName func -> func prevStateName) risingEdgeState depGroupsEval
 
-      let outStateNameMap = Map.fromList $ map (first I.pName) $ concat (nonDepOutStateName : depGroupsOutStateNames)
       -- `drop 1` in the declaration of `dec` drops the clock signal (which is the first after reordering)
       -- clock signal is not a real signal and is useless for the purpose of design evaluation
+      let goSig = clause ((varP state) : map ((\(f, s) -> [p| ~($f :- $s) |]) . both varP) (drop 1 acss))
       dec <- funD name
-        [clause inputPatterns (normalB (foldl appE [| $(varE go) $(varE initStateName) |] $ drop 1 $ map (varE . fst) acss) )
+        [clause inputPatterns
+         (normalB
+           [| $(unzipFN (length reorderedOutputs)) $
+              $(foldl appE [| $(varE goInit) $(varE initStateName) |] $ drop 1 $ map (varE . fst) acss)
+            |] )
         -- where
           [ initD
-          , funD go
-            [ clause ((varP state) : map ((\(f, s) -> [p| ~($f :- $s) |]) . both varP) (drop 1 acss))
-              (normalB
-                [|
-                  let
-                    mapping = $(makeMapping $ drop 1 $ zip (map (I.pName . fst) reorderedInputs) (map fst acss))
-                    ($(varP out), state') = tick $(liftString $ I.pName $ fst clockName) $(varE state) mapping
-                    result = $(makeUnmapping $ map ((, out) . I.pName . fst) markedOutputs)
-                  in
-                    result :- $(varE lastStateName) `seq` $(foldl appE [| $(varE go) state' |] $ drop 1 $ map (varE . snd) acss)
-                 |]) [] ]
+          , funD goInit
+            [ goSig
+              (normalB $
+               letE
+                (concat
+                  ( map pure nonDepInputsSet
+                  : map pure nonDepEval
+                  : [valD (varP initOutMap) (normalB [| peek $(varE nonDepState) |] ) []]
+                  : map (map pure) dependentEvalInit) )
+                [| $(makeUnmapping $ map ((, initOutMap) . I.pName . fst) reorderedOutputs) :-
+                  ($(varE lastStateNameInit) `seq` $(foldl appE [| $(varE goCycle) $(varE lastStateNameInit) |] $ drop 1 $ map (varE . snd) acss))
+                 |]
+              ) [] ]
+          , funD goCycle
+            [ goSig
+              (normalB $
+                letE
+                (concat $
+                 [ map pure nonDepInputsSet
+                 , map pure nonDepEval
+                 , [valD [p| ($(varP risingEdgeOutMap), $(varP risingEdgeState)) |]
+                    (normalB [| tick $(liftString clockName) high $(varE nonDepState) (mapFromList []) |]) [] ]
+                 ]
+                 ++ map (map pure) dependentEvalCycle
+                 ++ [[valD [p| (_, $(varP fallingEdgeState)) |]
+                      (normalB [| tick $(liftString clockName) low $(varE lastStateNameCycle) (mapFromList []) |]) [] ]
+                    ])
+                [| $(makeUnmapping $ map ((, risingEdgeOutMap) . I.pName . fst) reorderedOutputs) :-
+                  ($(varE fallingEdgeState) `seq` $(foldl appE [| $(varE goCycle) $(varE fallingEdgeState) |] $ drop 1 $ map (varE . snd) acss))
+                 |]
+              ) [] ]
           ] ]
       sig <- (sigD name [t| Clash.Signal.KnownDomain $(varT dom) => $(makeArrow argTys outTy) |])
       return [sig, dec, noinlineAnn, hasBlackBoxAnn]
     _ -> do
-      let (inputPatterns, acss, argTys) = convertInputs Nothing markedInputs
-          outTy = convertOutputs Nothing markedOutputs
-          inputNameMap = Map.fromList $ zip (map (I.pName . fst) markedInputs) (map fst acss)
+      let (inputPatterns, acss, argTys) = convertInputs Nothing $ reorderTo argTyNames markedInputs
+          reorderedOutputs = reorderTo retTyNames markedOutputs
+          outTy = convertOutputs Nothing reorderedOutputs
+
+          inputNames = map (I.pName . fst) markedInputs
+          otherInputs = filter (`notElem` allDependentInputs) inputNames
+          inputNameMap = Map.fromList $ zip inputNames (map fst acss)
+
+      stateND <- newName "stateND"
+      nonDepInputsSet <- [d| (_, $(varP stateND)) = tick "" low $(varE initStateName) $(makeMapping (map (id &&& (inputNameMap Map.!)) otherInputs)) |]
 
       (groupsOutStateNames, groupsEval) <- mapAndUnzipM
         (\(outs, dependencies -> deps) -> do
             (outputMapName, func) <- evalGroup (map (id &&& (inputNameMap Map.!)) deps)
             pure (map (, outputMapName) outs, func)
-        ) (nonDependent : dependentGroups)
+        ) (nonDependent ++ dependentGroups)
 
-      (_, dependentEval) <- mapAccumM (\prevStateName func -> func prevStateName) initStateName groupsEval
+      (_resultingState, groupsEvalDec) <- mapAccumM (\prevStateName func -> func prevStateName) stateND groupsEval
 
       let outStateNameMap = Map.fromList $ map (first I.pName) $ concat groupsOutStateNames
       dec <- funD name
         [clause inputPatterns
-         (normalB $
-           letE
-           (map pure $ concat dependentEval )
-           (makeUnmapping (map ((id &&& (outStateNameMap Map.!)) . I.pName . fst) markedOutputs))
+         (normalB
+           (letE
+            (map pure $ concat (nonDepInputsSet : groupsEvalDec) )
+            (makeUnmapping (map ((id &&& (outStateNameMap Map.!)) . I.pName . fst) reorderedOutputs)))
          )
          [ initD ] ]
       sig <- sigD name (makeArrow argTys outTy)
@@ -275,8 +341,7 @@ externalComponent filePath ModuleOptions{topEntityName=topLevelName, parameters=
             (stateName ,) <$>
               [d|
                 sourceInputs = $(makeMapping inputs)
-                (_, $(varP stateName)) = tick "" $(varE prevStateName) sourceInputs
-                $(varP outName) = peek $(varE stateName)
+                ($(varP outName), $(varP stateName)) = tick "" low $(varE prevStateName) sourceInputs
                 |])
 
     makeArrow argTys retTy = foldr (appT . appT arrowT) retTy argTys
@@ -297,16 +362,48 @@ foo a b = unpack $ $( externalComponentE "test.v" defaultOptions ) (pack a) (pac
 
 -}
 externalComponentE ::
+  ([String], [String]) ->
+  -- ^ Type of the component with port name annotations
   FilePath ->
   -- ^ Path to the verilog design
   ModuleOptions ->
   -- ^ Options
   Q Exp
-externalComponentE filePath modOptions = do
-  decs@(SigD name _ : _) <- externalComponent filePath modOptions
+externalComponentE types filePath modOptions = do
+  decs@(SigD name _ : _) <- externalComponent types filePath modOptions
   -- Take only the signature and the declaration, as annotations are not allowed in `let`
   letE (map pure $ take 2 decs) (varE name)
 
+unfoldType :: Type -> Q ([String], [String])
+unfoldType (ForallT doms cxt arrow)
+  | null cxt = unfoldType arrow
+  | otherwise = error "expected no constraints"
+unfoldType typ = do
+  let (argTys, retTy) = unsnoc $ unfoldr (\case (AppT (AppT ArrowT arg) rest) -> (arg, Just rest); other -> (other, Nothing)) typ
+  argTyNames <- arrowNames argTys
+  pure (argTyNames, [])
+  where
+    -- annotated name, not the real name of the type
+    typeName (AppT (AppT (ConT tripleColon) (LitT (StrTyLit name))) _)
+      | nameBase tripleColon == ":::" = pure name
+      | otherwise = error "something else but triple colon encountered"
+    typeName _ = error "something completely wrong encountered"
+
+    arrowNames :: [Type] -> Q [String]
+    arrowNames = mapM typeName
+
+    -- taken from cabal-syntax Distribution.Utils.Generic
+    unsnoc :: NonEmpty a -> ([a], a)
+    unsnoc (x :| xs) = go x xs
+      where
+        go y [] = ([], x)
+        go y (z : zs) = let (ws, w) = go z zs in (y : ws, w)
+
+reorderTo :: [String] -> [(I.Port, a)] -> [(I.Port, a)]
+reorderTo dest orig = map (orig List.!!) ind
+  where
+    origNames = map (I.pName . fst) orig
+    ind = mapMaybe (`List.elemIndex` origNames) dest
 
 convertPort ::
   Maybe Name ->
@@ -354,12 +451,12 @@ convertInputs dom ins = (names, acss, args)
     -- pat = map (\n -> (n, mkName n)) names
 
 convertOutputs :: Maybe Name -> [(I.Port, Role)] -> Q Type
-convertOutputs dom outs
-  | Just dom <- dom = [t| Clash.Signal.Signal $(varT dom) $ty |]
-  | otherwise = ty
+convertOutputs dom outs = ty
+  -- | Just dom <- dom = [t| Clash.Signal.Signal $(varT dom) $ty |]
+  -- | otherwise = ty
   where
     -- Discard patterns and accessor names as they are not needed for the output
-    (names, ress) = unzip $ map (\(_, (name, _), c) -> (name, c)) $ convertPorts Nothing outs
+    ress = map (\(_, (name, _), c) -> c) $ convertPorts dom outs
 
     -- If there are multiple return values, construct a tuple
     ty = case ress of

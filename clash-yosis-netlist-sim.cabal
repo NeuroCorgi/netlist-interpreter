@@ -59,6 +59,10 @@ test-suite netlist-sim-unittest
 test-suite netlist-sim-inttest
     type: exitcode-stdio-1.0
     main-is: Main.hs
+    other-modules:
+        Test.Clash.Fibonacci
+        Test.Clash.ExternalLoop2
+        Test.Clash.ExternalLoop3
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver

@@ -18,9 +18,11 @@ import qualified Data.Map as Map (lookup, elems)
 import Data.Maybe (mapMaybe, fromMaybe)
 
 import qualified Data.IntMap as IM
+import qualified Data.Set as S
 
 import Memory
 import Intermediate
+import Data.List (uncons)
 
 data Role
   = Clock
@@ -101,13 +103,13 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
   where
     lookupWire :: Int -> IM.IntMap CombDependent -> CombDependent
     lookupWire = (fromMaybe NotDependent .) . IM.lookup
-    
+
     lookupPort :: Port -> (Port, CombDependent)
     lookupPort p@Port{pBits=bits} = (p, comb)
       where
         comb = combineGroup . map (`lookupWire` finalMark) $ wires bits
-    
-    --TODO: make a better graph traversal than whatever I'm going to write now on March 26th 2025 at 14:25
+
+    --TODO: make a better graph traversal than whatever I'm going to write now on March 26th 2025 at 14:25, and better than updated on March 31st at 14:03
     front = concatMap (wires . pBits) inputs
     initialMark = IM.fromList $ concatMap initMark inputs
       where
@@ -115,11 +117,9 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
           map (, if name `elem` nonCombInputs then NotDependent else Combinatorial [name]) (wires bits)
     finalMark = go front initialMark
 
-
-
     go :: [Int] -> IM.IntMap CombDependent -> IM.IntMap CombDependent
     go [] marking = marking
-    go queue marking = go (concat next) (foldl (IM.unionWith combine) marking newMarks)
+    go queue marking = go next (maybe marking (IM.unionWith combine marking) newMarksUnited)
       where
         visitCell Cell{cInputs=ins, cOutputs=outs}
           | (not . null) $ queue `List.intersect` inputs =
@@ -130,6 +130,7 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
           where
             inputs = concatMap wires . Map.elems $ ins
             outputs = concatMap wires . Map.elems $ outs
-          
-        (next, newMarks) = unzip $ mapMaybe visitCell cells
-        
+
+        (nextCandidates, newMarks) = unzip $ mapMaybe visitCell cells
+        newMarksUnited = uncurry (foldl (IM.unionWith combine)) <$> uncons newMarks
+        next = concatMap (filter (\a -> IM.lookup a marking /= (IM.lookup a =<< newMarksUnited))) nextCandidates
