@@ -63,6 +63,7 @@ test-suite netlist-sim-inttest
         Test.Clash.Fibonacci
         Test.Clash.ExternalLoop2
         Test.Clash.ExternalLoop3
+        -- Test.Clash.ExternalLoop
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver
@@ -71,6 +72,9 @@ test-suite netlist-sim-inttest
         ViewPatterns
         TemplateHaskell
         NoImplicitPrelude
+        TypeApplications
+        ScopedTypeVariables
+        FlexibleInstances
     build-depends:
         base ^>=4.19.0.0,
         tasty,

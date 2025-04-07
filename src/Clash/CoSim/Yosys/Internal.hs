@@ -2,12 +2,16 @@
 
 module Clash.CoSim.Yosys.Internal
   ( Role(..)
-  , CombDependent(..)
   , markRolesForInputs
   , reorder
+  -- * Dependent group detection
+  , CombDependent(..)
   , dependencies
   , markDependentOutputs
   , uniteDependentGroups
+  -- * Doman detection
+  , Domain
+  , markDomains
   )
 where
 
@@ -36,7 +40,7 @@ markRolesForInputs :: Module -> [(Port, Role)]
 markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
   where
     -- Naive guesses for names of ports
-    clock, reset, enable :: [(String -> Bool)]
+    clock, reset, enable :: [String -> Bool]
     clock = [(== "clk"), (== "clock")]
     reset = [(== "rst"), (== "arst"), (== "reset")]
     enable = [(== "en"), (== "enable")]
@@ -69,7 +73,9 @@ reorder lst = clock ++ reset ++ enable ++ rest''
 
 data CombDependent
   = NotDependent
+  -- ^ Outputs does not depend on any input port or only depends on ports that are known to be independent
   | Combinatorial [String]
+  -- ^ Outputs depends on the list of input ports that can be combinatorial to the outputs and possibly on some independent port inputs
   deriving Eq
 
 combineGroup :: [CombDependent] -> CombDependent
@@ -98,7 +104,14 @@ uniteDependentGroups (x : xs) = go (first List.singleton x) xs
         (group, rest) = List.partition (not . null . List.intersect this . dependencies . snd) xs
         (as, combs) = unzip group
 
-markDependentOutputs :: Module -> [String] -> [(Port, CombDependent)]
+-- | Mark groups of outputs depending on which inputs they depend on.
+--
+markDependentOutputs
+  :: Module
+  -- ^ Module to analyse
+  -> [String]
+  -- ^ Name of the inputs ports that are known to be independent from the outputs
+  -> [(Port, CombDependent)]
 markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells} nonCombInputs = map lookupPort outputs
   where
     lookupWire :: Int -> IM.IntMap CombDependent -> CombDependent
@@ -134,3 +147,8 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
         (nextCandidates, newMarks) = unzip $ mapMaybe visitCell cells
         newMarksUnited = uncurry (foldl (IM.unionWith combine)) <$> uncons newMarks
         next = concatMap (filter (\a -> IM.lookup a marking /= (IM.lookup a =<< newMarksUnited))) nextCandidates
+
+newtype Domain = Domain Int
+
+markDomains :: Module -> [(Port, Domain)]
+markDomains Module{modInputs=inputs, modOutputs=outputs, modCells=cells} = undefined

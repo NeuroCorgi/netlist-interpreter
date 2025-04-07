@@ -7,6 +7,7 @@ module Clash.CoSim.Yosys.Util
   , zipLongest
   , unzipFN
   , unzipN
+  , accs
   )
 where
 
