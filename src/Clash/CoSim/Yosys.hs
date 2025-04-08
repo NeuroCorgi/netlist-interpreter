@@ -264,7 +264,6 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
   -- hasBlackBoxAnn <- pragAnnD (ValueAnnotation name) [| (HasBlackBox [] ()) |]
   -- If there is something that resembles clock signal, then consider the design synchronous
   case maybeClockName of
-    -- clock name is needed to tick it during update, separately from all other inputs
     Just _ -> do
       let dom = mkName "dom"
           reorderedInputs = reorderTo argTyNames markedInputs
@@ -273,9 +272,9 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
           outTy = convertOutputs (Just dom) reorderedOutputs
 
           inputNames = map (I.pName . fst) reorderedInputs
-          (clockInputs, nonClockInputs) = both (map (fst *** fst)) $ List.partition ((== Clock) . snd . fst) $ zip reorderedInputs acss
+          (clockInputs, nonClockInputs) = both (map (first fst)) $ List.partition ((== Clock) . snd . fst) $ zip reorderedInputs acss
           -- `drop 1` is explained further
-          otherInputs = filter (`notElem` allDependentInputs) $ drop 1 inputNames
+          otherInputs = filter (`notElem` allDependentInputs) $ map (I.pName . fst) nonClockInputs
 
           inputNameMap = Map.fromList $ zip inputNames (map fst acss)
       ticks <- newName "ticksCycle"
@@ -302,7 +301,7 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       let nonDepInputsSet tickEvents =
             [d|
               (_, $(varP stateND)) =
-                tick "" low $(varE state) $(makeMapping tickEvents (map (id &&& triple (const 0) (const Rising) (inputNameMap Map.!)) otherInputs))
+                tick "" low $(varE state) $(makeMapping tickEvents (map (id &&& triple (argDoms Map.!) (const Rising) (inputNameMap Map.!)) otherInputs))
               |]
       nonDepInputsSet_Init <- nonDepInputsSet Nothing
       nonDepInputsSet_Cycle <- nonDepInputsSet (Just currentTick)
@@ -325,7 +324,7 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       -- generates functions to make evaluations for dependent groups
       let depGroupsEval tickEvents = mapAndUnzipM
             (\(outs, dependencies -> deps) -> do
-                (outputMapName, func) <- evalGroup tickEvents (map (id &&& triple (const 0) (const Falling) (inputNameMap Map.!)) deps)
+                (outputMapName, func) <- evalGroup tickEvents (map (id &&& triple (argDoms Map.!) (const Falling) (inputNameMap Map.!)) deps)
                 pure (map (, outputMapName) outs, func)
             ) dependentGroups
       (_, depGroupsEval_Init) <- depGroupsEval Nothing
@@ -344,20 +343,20 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       dec <- funD name
         [clause inputPatterns
          (normalB $ tupE' $ zipWith
-           (\i out ->
+           (\i (port, _) ->
              [| Clash.Signal.fromList
                 $ map ($(accs (length reorderedOutputs) i) . fst)
-                $ filter (((0, Rising) `elem`) . snd)
+                $ filter ((($(lift $ retDoms Map.! I.pName port), Rising) `elem`) . snd)
                 $ $(varE signal) |])
            [0,1..] reorderedOutputs)
            -- [| $(unzipFN (length reorderedOutputs)) $ $(varE signal) |] )
         -- where
           [ initD
-          , valD (varP ticks) (normalB $ foldl appE [| clockTicks |] $ map (varE . snd) clockInputs) []
-          , valD (varP signal) (normalB $ foldl appE [| $(varE goInit) $(varE initStateName) |] $ drop 1 $ map (varE . fst) acss) []
+          , valD (varP ticks) (normalB $ foldl appE [| clockTicks |] $ map (varE . fst . snd) clockInputs) []
+          , valD (varP signal) (normalB $ foldl appE [| $(varE goInit) $(varE initStateName) |] $ map (varE . fst . snd) nonClockInputs) []
           -- Initialisation before the first clock cycle
           , funD goInit
-            [ clause ((varP state) : map ((\(f, s) -> [p| ($f :- $s) |]) . both varP) (drop 1 acss))
+            [ clause ((varP state) : map ((\(f, s) -> [p| ~($f :- $s) |]) . both varP) (drop 1 acss))
               (normalB $
                letE
                 (concat
@@ -366,11 +365,11 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
                   : [valD (varP initOutMap) (normalB [| peek $(varE nonDepState_Init) |] ) []]
                   : map (map pure) dependentEval_Init) )
                 [| ($(makeUnmapping $ map ((, initOutMap) . I.pName . fst) reorderedOutputs), [(i, Rising) | i <- [0.. $(lift $ length clockInputs) - 1]]) :
-                  ($(varE lastStateName_Init) `seq` $(foldl appE [| $(varE goCycle) $(varE ticks) $(varE lastStateName_Init) |] $ drop 1 $ map (varE . snd) acss))
+                  ($(foldl appE [| $(varE goCycle) $(varE ticks) $(varE lastStateName_Init) |] $ map (varE . snd . snd) nonClockInputs))
                  |]
               ) [] ]
           , funD goCycle
-            [ clause ([p| ($(varP currentTick) : $(varP ticksCont)) |] : (varP state) : map ((\(f, s) -> [p| ($f :- $s) |]) . both varP) (drop 1 acss))
+            [ clause ([p| ($(varP currentTick) : $(varP ticksCont)) |] : (varP state) : map ((\(f, s) -> [p| ~($f :- $s) |]) . both varP) (drop 1 acss))
               (normalB $
                 letE
                 (concat $
@@ -380,7 +379,7 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
                  ++ [ [valD [p| ($(varP clockTickOutMap), $(varP clockTickState)) |]
                       (normalB [| foldl (\(_, s) (domId, edge) -> tick ($(varE domIdToClockName) !! domId) (edgeToState edge) s Map.empty) (error "unused", $(varE lastStateName_Cycle)) $(varE currentTick) |]) [] ] ] )
                 [| ($(makeUnmapping $ map ((, clockTickOutMap) . I.pName . fst) reorderedOutputs), $(varE currentTick)) :
-                  ($(varE clockTickState) `seq` $(foldl appE [| $(varE goCycle) $(varE ticksCont) $(varE clockTickState) |] $ drop 1 $ map (varE . snd) acss))
+                  ($(foldl appE [| $(varE goCycle) $(varE ticksCont) $(varE clockTickState) |] $ map (varE . snd . snd) nonClockInputs))
                  |]
               ) [ valD (varP domIdToClockName) (normalB $ listE $ map (liftString . I.pName . fst) clockInputs) [] ] ]
           ] ]

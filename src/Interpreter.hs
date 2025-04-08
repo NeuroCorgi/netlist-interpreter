@@ -24,6 +24,7 @@ import Prelude hiding ((!!))
 import Control.Arrow (first, second, (&&&))
 
 import Data.Vector (Vector)
+import qualified Data.Vector as V
 import qualified Data.List as L
 
 import Data.Map (Map)
@@ -46,7 +47,7 @@ maybeTyple (Just a, b) = Just (a, b)
 maybeTyple (Nothing, _) = Nothing
 
 data Design = Design
-  { dNodes :: [Node]
+  { dNodes :: Vector Node
   , dIns :: [(String, BitVector)]
   , dOuts :: [(String, BitVector)]
   , dMemory :: Memory Vector
@@ -65,7 +66,7 @@ compile topLevel@Module{modCells=cells, modInputs=inputs, modOutputs=outputs, mo
   -- a map of wires causing updates to nodes.
   --TODO: possibly optimize lists
   -- it's not a performance bottleneck, so let it be for now
-  let updateMap = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concatMap (\(i, Node (_, nodeIns, _)) -> map (, i) nodeIns) $ zip [0..] nodes
+  let updateMap = foldl (\m (key, val) -> Map.insertWith (++) key [val] m) Map.empty . concat $ V.imap (\i (Node (_, nodeIns, _)) -> map (, i) nodeIns) nodes
   -- First eval to propagate initial values
   return $ eval $ Design
     { dNodes = nodes
@@ -102,7 +103,7 @@ step d@Design {dMemory, dNodes, dUpdateMap} = d{dMemory=go dMemory}
         -- Although, a something else might be better, having that we have known the exact number of cells and ideally
         -- we can check if node was seen in constant time
         influencedNodesInds = L.nub . concat $ mapMaybe ((`Map.lookup` dUpdateMap) . fst) ups
-        influencedNodes = map (dNodes L.!!) influencedNodesInds
+        influencedNodes = map (dNodes V.!) influencedNodesInds
 
         runningMem = stageUpdates oldMem
         endMem@Memory{mUpdated=newUpdates} = L.foldl' (\mem (Node (f, _, _)) -> f mem) runningMem influencedNodes

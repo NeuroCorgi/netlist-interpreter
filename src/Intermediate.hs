@@ -21,6 +21,7 @@ import Data.Maybe (fromMaybe)
 import Data.Map (Map)
 import qualified Data.Map as M
 import qualified Data.List as L
+import qualified Data.Vector as V
 
 import Data.Data (Data)
 
@@ -60,7 +61,7 @@ data Module = Module
   , modAttributes :: AttrMap
   , modInputs :: [Port]
   , modOutputs :: [Port]
-  , modCells :: [Cell]
+  , modCells :: V.Vector Cell
   , modNetnames :: [Net]
   } deriving Data
 
@@ -82,7 +83,7 @@ ofJson (J.TopLevel mods) = map namedModule $ M.assocs mods
           modAttributes = jsonModAttributes,
           modInputs = map namedPort ins,
           modOutputs = map namedPort outs,
-          modCells = map (namedCell . snd) $ J.toList jsonModCells,
+          modCells = V.fromList $ map (namedCell . snd) $ J.toList jsonModCells,
           -- modMemories = map namedMemo $ Map.assocs $ fromMaybe Map.empty memories
           modNetnames = map (namedNetName . snd) $ J.toList jsonModNetnames
         }

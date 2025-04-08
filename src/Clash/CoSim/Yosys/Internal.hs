@@ -19,7 +19,9 @@ import Control.Arrow (first)
 
 import qualified Data.List as List
 import qualified Data.Map as Map (lookup, elems)
-import Data.Maybe (mapMaybe, fromMaybe)
+import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
+
+import qualified Data.Vector as V
 
 import qualified Data.IntMap as IM
 import qualified Data.Set as S
@@ -41,9 +43,9 @@ markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
   where
     -- Naive guesses for names of ports
     clock, reset, enable :: [String -> Bool]
-    clock = [(== "clk"), (== "clock")]
-    reset = [(== "rst"), (== "arst"), (== "reset")]
-    enable = [(== "en"), (== "enable")]
+    clock = map List.isPrefixOf ["clk", "clock"]
+    reset = map List.isPrefixOf ["rst", "arst", "reset"]
+    enable = map List.isPrefixOf ["en", "enable"]
 
     mark p@Port{pName=name, pBits=bits}
     -- First naive guess by the port name
@@ -59,7 +61,7 @@ markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
 
     like f name = or $ f <*> return name
 
-    cellInputs signal = List.nub . concatMap wires . mapMaybe (\Cell{cInputs=ins} -> Map.lookup signal ins)
+    cellInputs signal = List.nub . concatMap wires . V.mapMaybe (\Cell{cInputs=ins} -> Map.lookup signal ins)
     cellClockInputs = cellInputs "CLK" cells
     cellResetInputs = cellInputs "ARST" cells
     cellEnableInputs = cellInputs "EN" cells
@@ -144,8 +146,8 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
             inputs = concatMap wires . Map.elems $ ins
             outputs = concatMap wires . Map.elems $ outs
 
-        (nextCandidates, newMarks) = unzip $ mapMaybe visitCell cells
-        newMarksUnited = uncurry (foldl (IM.unionWith combine)) <$> uncons newMarks
+        (nextCandidates, newMarks) = V.unzip $ V.mapMaybe visitCell cells
+        newMarksUnited = uncurry (foldl (IM.unionWith combine)) <$> uncons (V.toList newMarks)
         next = concatMap (filter (\a -> IM.lookup a marking /= (IM.lookup a =<< newMarksUnited))) nextCandidates
 
 newtype Domain = Domain Int
