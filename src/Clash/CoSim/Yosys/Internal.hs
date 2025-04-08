@@ -1,4 +1,5 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module Clash.CoSim.Yosys.Internal
   ( Role(..)
@@ -9,13 +10,11 @@ module Clash.CoSim.Yosys.Internal
   , dependencies
   , markDependentOutputs
   , uniteDependentGroups
-  -- * Doman detection
-  , Domain
-  , markDomains
+  , splitModule
   )
 where
 
-import Control.Arrow (first)
+import Control.Arrow (first, (&&&))
 
 import qualified Data.List as List
 import qualified Data.Map as Map (lookup, elems)
@@ -150,7 +149,44 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
         newMarksUnited = uncurry (foldl (IM.unionWith combine)) <$> uncons (V.toList newMarks)
         next = concatMap (filter (\a -> IM.lookup a marking /= (IM.lookup a =<< newMarksUnited))) nextCandidates
 
-newtype Domain = Domain Int
+data Origin
+  = ModInput String
+  | CellOut Int
 
-markDomains :: Module -> [(Port, Domain)]
-markDomains Module{modInputs=inputs, modOutputs=outputs, modCells=cells} = undefined
+data ModuleSection = ModuleSection
+  { msInputs :: [String]
+  , msOutput :: String
+  , msCells :: [Int]
+  }
+
+emptyModuleSection :: String -> ModuleSection
+emptyModuleSection output = ModuleSection [] output []
+
+splitModule :: Module -> [String] -> [Module]
+splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} nonDepInputs = mods
+  where
+    sourceOrigin :: IM.IntMap Origin
+    sourceOrigin = IM.fromList (inputsOrigin ++ cellOutputsOrigin)
+
+    inputsOrigin = concatMap ( uncurry (\s-> map (, ModInput s)) . (pName &&& wires . pBits)) inputs
+    cellOutputsOrigin = concat $ V.toList $ V.imap (\i -> map (, CellOut i) . concatMap wires . Map.elems . cOutputs) cells
+
+    mods = map (\Port{pName=name, pBits=bits} -> sectionToModule $ singleSection (emptyModuleSection name) $ wires bits) outputs
+
+    singleSection :: ModuleSection -> [Int] -> ModuleSection
+    singleSection modSect outs = singleSection modSect' newOuts
+      where
+        (modSect', sources) = List.mapAccumL
+          (\sect out ->
+             case sourceOrigin IM.! out of
+               CellOut i -> (sect{msCells=i : msCells sect}, Just (concatMap wires . Map.elems . cInputs $ cells V.! i))
+               ModInput s -> (sect{msInputs=s : msInputs sect}, Nothing)
+          ) modSect outs
+
+        newOuts = concat $ catMaybes sources
+
+    sectionToModule :: ModuleSection -> Module
+    sectionToModule ModuleSection{msInputs, msOutput, msCells} =
+      mod{ modInputs = filter ((`elem` msInputs) . pName) inputs
+         , modOutputs = filter ((== msOutput) . pName) outputs
+         , modCells = V.fromList $ map (cells V.!) msCells }
