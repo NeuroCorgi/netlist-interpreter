@@ -23,6 +23,7 @@ import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 import qualified Data.Vector as V
 
 import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 import qualified Data.Set as S
 
 import Memory
@@ -154,16 +155,16 @@ data Origin
   | CellOut Int
 
 data ModuleSection = ModuleSection
-  { msInputs :: [String]
+  { msInputs :: S.Set String
   , msOutput :: String
-  , msCells :: [Int]
+  , msCells :: IS.IntSet
   }
 
 emptyModuleSection :: String -> ModuleSection
-emptyModuleSection output = ModuleSection [] output []
+emptyModuleSection output = ModuleSection S.empty output IS.empty
 
 splitModule :: Module -> [String] -> [Module]
-splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} nonDepInputs = mods
+splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} _ = mods
   where
     sourceOrigin :: IM.IntMap Origin
     sourceOrigin = IM.fromList (inputsOrigin ++ cellOutputsOrigin)
@@ -171,22 +172,26 @@ splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} non
     inputsOrigin = concatMap ( uncurry (\s-> map (, ModInput s)) . (pName &&& wires . pBits)) inputs
     cellOutputsOrigin = concat $ V.toList $ V.imap (\i -> map (, CellOut i) . concatMap wires . Map.elems . cOutputs) cells
 
-    mods = map (\Port{pName=name, pBits=bits} -> sectionToModule $ singleSection (emptyModuleSection name) $ wires bits) outputs
+    mods = map (\Port{pName=name, pBits=bits} -> sectionToModule $ singleSection IS.empty (emptyModuleSection name) $ wires bits) outputs
 
-    singleSection :: ModuleSection -> [Int] -> ModuleSection
-    singleSection modSect outs = singleSection modSect' newOuts
+    singleSection :: IS.IntSet -> ModuleSection -> [Int] -> ModuleSection
+    singleSection _ modSect [] = modSect
+    singleSection visited modSect outs = singleSection newVisited modSect' newOuts
       where
         (modSect', sources) = List.mapAccumL
           (\sect out ->
              case sourceOrigin IM.! out of
-               CellOut i -> (sect{msCells=i : msCells sect}, Just (concatMap wires . Map.elems . cInputs $ cells V.! i))
-               ModInput s -> (sect{msInputs=s : msInputs sect}, Nothing)
+               CellOut i -> (sect{msCells=IS.insert i (msCells sect)}, Just (concatMap wires . Map.elems . cInputs $ cells V.! i))
+               ModInput s -> (sect{msInputs=S.insert s (msInputs sect)}, Nothing)
           ) modSect outs
 
-        newOuts = concat $ catMaybes sources
+        newVisited = foldr IS.insert visited outs
+        newOuts = concatMap (filter (not . (`IS.member` visited))) (catMaybes sources)
 
     sectionToModule :: ModuleSection -> Module
     sectionToModule ModuleSection{msInputs, msOutput, msCells} =
-      mod{ modInputs = filter ((`elem` msInputs) . pName) inputs
+      let cs = trace ("Cells: " ++ show msCells) msCells
+      in
+      mod{ modInputs = filter ((`S.member` msInputs) . pName) inputs
          , modOutputs = filter ((== msOutput) . pName) outputs
-         , modCells = V.fromList $ map (cells V.!) msCells }
+         , modCells = V.fromList $ map (cells V.!) $ IS.elems cs }
