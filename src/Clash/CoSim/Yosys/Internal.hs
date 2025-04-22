@@ -1,5 +1,6 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Clash.CoSim.Yosys.Internal
   ( Role(..)
@@ -16,7 +17,10 @@ where
 
 import Control.Arrow (first, (&&&))
 
+import Language.Haskell.TH hiding (Role)
+
 import qualified Data.List as List
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map (lookup, elems)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 
@@ -36,6 +40,57 @@ data Role
   | Enable
   | Other
   deriving Eq
+-- unfoldType :: Type -> Q ([(String, Role)], [String])
+-- unfoldType (ForallT doms cxt arrow)
+--   | null cxt = unfoldType arrow
+--   | otherwise = error "expected no constraints"
+-- unfoldType typ = do
+--   let (argTys, retTy) = unsnoc $ NonEmpty.unfoldr (\case (AppT (AppT ArrowT arg) rest) -> (arg, Just rest); other -> (other, Nothing)) typ
+--   argTyNames <- arrowNames argTys
+--   retTuNames <- returnNames retTy
+--   pure (argTyNames, [])
+--   where
+--     -- annotated name, not the real name of the type
+--     typeNameRole (AppT (AppT (ConT tripleColon) (LitT (StrTyLit name))) ty)
+--       | nameBase tripleColon == ":::" = pure (name, typeRole ty)
+--       | otherwise = error "something else but triple colon encountered"
+--     typeNameRole _ = error "something completely wrong encountered"
+--
+--     typeRole (ConT tyName)
+--       | tyNameBase == "Clock" = Clock (Domain 0)
+--       | tyNameBase == "Reset" = Reset (Domain 0)
+--       | tyNameBase == "Enable" = Enable (Domain 0)
+--       where
+--         tyNameBase = nameBase tyName
+--     typeRole (AppT (ConT tyName) arg)
+--       | tyNameBase == "Clock" = Clock (Domain 1)
+--       | tyNameBase == "Reset" = Reset (Domain 1)
+--       | tyNameBase == "Enable" = Enable (Domain 1)
+--       | tyNameBase == "Signal" = Signal (Domain 0) (tyBitVectorLen arg)
+--       where
+--         tyNameBase = nameBase tyName
+--     typeRole (AppT (AppT (ConT tyName) (VarT domName)) arg)
+--       | nameBase tyName == "Signal" = Signal (Domain 1) (tyBitVectorLen arg)
+--     typeRole _ = error "something really wrong was passed"
+--
+--     tyBitVectorLen (AppT (ConT bitVectorName) (LitT (NumTyLit n)))
+--       | nameBase bitVectorName == "BitVector" = fromInteger n
+--     tyBitVectorLen _ = error "expected bitvector at some point"
+--
+--     arrowNames :: [Type] -> Q [(String, Role)]
+--     arrowNames = mapM typeNameRole
+--
+--     returnNames :: Type -> Q [(String, Role)]
+--     returnNames typ = mapM typeNameRole retTypes
+--       where
+--         retTypes = NonEmpty.toList $ NonEmpty.unfoldr (\case (AppT (TupleT _) arg) -> (arg, Nothing); (AppT rest arg) -> (arg, Just rest)) typ
+--
+--     -- taken from cabal-syntax Distribution.Utils.Generic
+--     unsnoc :: NonEmpty.NonEmpty a -> ([a], a)
+--     unsnoc (x NonEmpty.:| xs) = go x xs
+--       where
+--         go y [] = ([], x)
+--         go y (z : zs) = let (ws, w) = go z zs in (y : ws, w)
 
 markRolesForInputs :: Module -> [(Port, Role)]
 -- Multy domain design with several clock signals?
@@ -49,15 +104,20 @@ markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
 
     mark p@Port{pName=name, pBits=bits}
     -- First naive guess by the port name
-      | like clock name = (p, Clock)
-      | like reset name = (p, Reset)
-      | like enable name = (p, Enable)
+      | like clock name = (p, dClock)
+      | like reset name = (p, dReset)
+      | like enable name = (p, dEnable)
     -- Second guess by loking at internal cell inputs
-      | cs == cellClockInputs = (p, Clock)
-      | cs == cellResetInputs = (p, Reset)
-      | cs == cellEnableInputs = (p, Enable)
-      | otherwise = (p, Other)
+      | cs == cellClockInputs = (p, dClock)
+      | cs == cellResetInputs = (p, dReset)
+      | cs == cellEnableInputs = (p, dEnable)
+      | otherwise = (p, Other) -- Value (length $ pBits p))
       where cs = wires bits
+
+    dClock, dReset, dEnable :: Role
+    dClock = Clock -- (Domain 0)
+    dReset = Reset -- (Domain 0)
+    dEnable = Enable -- (Domain 0)
 
     like f name = or $ f <*> return name
 
@@ -65,13 +125,6 @@ markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
     cellClockInputs = cellInputs "CLK" cells
     cellResetInputs = cellInputs "ARST" cells
     cellEnableInputs = cellInputs "EN" cells
-
-reorder :: [(a, Role)] -> [(a, Role)]
-reorder lst = clock ++ reset ++ enable ++ rest''
-  where
-    (clock, rest) = List.partition ((== Clock) . snd) lst
-    (reset, rest') = List.partition ((== Reset) . snd) rest
-    (enable, rest'') = List.partition ((== Enable) . snd) rest'
 
 data CombDependent
   = NotDependent
@@ -153,6 +206,7 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
 data Origin
   = ModInput String
   | CellOut Int
+  deriving Show
 
 data ModuleSection = ModuleSection
   { msInputs :: S.Set String

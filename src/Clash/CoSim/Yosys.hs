@@ -38,7 +38,7 @@ where
 import Language.Haskell.TH hiding (Role)
 import Language.Haskell.TH.Syntax (lift, liftString, liftData, Lift)
 
-import Control.Arrow (first, (&&&), (***))
+import Control.Arrow (first, (&&&))
 import Control.Monad (mapAndUnzipM, (<=<))
 
 import Data.Int (Int64)
@@ -46,9 +46,9 @@ import Data.Coerce (coerce)
 
 import Data.Traversable (mapAccumM)
 import Data.Maybe (fromJust, mapMaybe, catMaybes)
-import qualified Data.Map as Map (Map, fromList, lookup, empty, (!))
+import qualified Data.Map as Map (Map, fromList, empty, (!))
 import qualified Data.List as List
-import Data.List.NonEmpty (unfoldr, NonEmpty((:|)))
+import Data.List.NonEmpty (toList, unfoldr, NonEmpty((:|)))
 
 import Data.Vector (Vector)
 import qualified Data.Vector as V (singleton)
@@ -103,7 +103,6 @@ instance (ClockTick t, Clash.Signal.KnownDomain dom) => ClockTick (Clash.Signal.
     | Just periods <- CLK.clockPeriods clk = ticks' (Clash.Signal.sample (unFemtoSeconds periods) : accumClocks)
     | SDomainConfiguration{sPeriod} <- knownDomain @dom = ticks' ((repeat . (* 1000) $ snatToNum sPeriod) : accumClocks)
     where
-      domName = ssymbolToString $ CLK.clockTag clk
       unFemtoSeconds :: Signal dom Femtoseconds -> Signal dom Int64
       unFemtoSeconds = coerce
 
@@ -237,7 +236,7 @@ topEntity :: Clash.Sized.BitVector 2 -> Clash.Sized.BitVector 1 -> Clash.Sized.B
 
 -}
 externalComponent
-  :: ([String], [String])
+  :: ([(String, Int)], [(String, Int)])
   -- ^ Type annotation of a component with port names annotations
   -> FilePath
   -- ^ Path to the verilog design file
@@ -250,13 +249,15 @@ externalComponent (argTyNameDom, retTyNameDom) filePath ModuleOptions{topEntityN
   let markedInputs = markRolesForInputs topLevel
       markedOutputs = map (, Other) $ I.modOutputs topLevel
       maybeClockName = List.find ((== Clock) . snd) markedInputs
+      (argTyNames, argDoms) = map fst &&& Map.fromList $ argTyNameDom
+      (retTyNames, retDoms) = map fst &&& Map.fromList $ retTyNameDom
       specialSignalNames = map (I.pName . fst) $ filter ((== Clock) . snd) markedInputs
       markedDependentGroups = markDependentOutputs topLevel (specialSignalNames ++ nonCombIns)
       (nonDependent, dependentGroups) = both uniteDependentGroups $ List.partition ((== NotDependent) . snd) markedDependentGroups
       allDependentInputs = concatMap (dependencies . snd) dependentGroups
       otherInputs = filter (`notElem` allDependentInputs) $ map (I.pName . fst) markedInputs
       mods = splitModule topLevel (specialSignalNames ++ nonCombIns)
-      reorderedModules = reorderModsTo retTyNameDom mods
+      reorderedModules = reorderModsTo retTyNames mods
 
   name <- newName $ I.modName topLevel
   initStateName <- newName "initState"
@@ -274,8 +275,6 @@ externalComponent (argTyNameDom, retTyNameDom) filePath ModuleOptions{topEntityN
           (inputPatterns, acss, argTys) = convertInputs (Just dom) reorderedInputs
           outTy = convertOutputs (Just dom) reorderedOutputs
 
-
-          -- inputNameMap = Map.fromList $ zip inputNames (map fst acss)
           depMap = Map.fromList (map (, NotDependentPort) otherInputs ++ map (, DependentPort) allDependentInputs)
 
           inputPorts = zipWith
@@ -378,7 +377,7 @@ foo a b = unpack $ $( externalComponentE "test.v" defaultOptions ) (pack a) (pac
 
 -}
 externalComponentE ::
-  ([String], [String]) ->
+  ([(String, Int)], [(String, Int)]) ->
   -- ^ Type of the component with port name annotations
   FilePath ->
   -- ^ Path to the verilog design
@@ -427,8 +426,6 @@ moduleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs,
   let allPortInputs = map ((portMap Map.!) . I.pName) inputs
       (_, portInputs) = List.partition ((== Clock) . portRole) allPortInputs
 
-  runIO $ print portInputs
-
   clockTickOutMap <- newName "outMap"
   clockTickState <- newName "clockOutState"
   outState <- newName "outState"
@@ -441,7 +438,6 @@ moduleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs,
     -- initState = valD (varP initName) (normalB [| undefined |]) []
 
     goPattern = (varP state : map destructivePattern portInputs)
-
     goInit = funD initFunc
       [ clause goPattern
         (normalB $
@@ -461,7 +457,7 @@ moduleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs,
          , valD [p| ($(varP clockTickOutMap), $(varP clockTickState)) |] (normalB [| foldl (\(_, s) (domId, edge) -> tick ($(varE clockNameMap) !! domId) (edgeToState edge) s Map.empty) (error "unused", $(varE outState)) $(varE currentClockEvents) |]) []
          ]
          [| ($(makeUnmapping clockTickOutMap outPortName), $(varE currentClockEvents)) :
-            $(foldl appE [| $(varE cycleFunc) $(varE nextClockEvents) $(varE clockTickState) |] $ map (wasUsed currentClockEvents) portInputs )
+            $(foldl appE [| $(varE cycleFunc) $(varE nextClockEvents) $(varE clockTickState) |] $ map (nextEventSignal currentClockEvents) portInputs )
           |]
         ) [] ]
     signalBody = letE
@@ -474,12 +470,16 @@ moduleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs,
     { signal = [| Clash.Signal.fromList $ map fst $ filter ((($(lift $ portDomain output), Rising) `elem`) . snd) $ $signalBody |]
     }
   where
-    wasUsed :: Name -> PortTH -> ExpQ
-    wasUsed currentEventName PortTH{portDomain, portDependency, headAccessor, tailAccessor} =
+    -- | Signal to pass to the next clock event
+    -- if a signal was consumed at this event, pass tail further
+    -- otherwise leave the head
+    -- TODO: use lazy pattern, to not force deconstruction and reconstruction here
+    nextEventSignal :: Name -> PortTH -> ExpQ
+    nextEventSignal currentEventName PortTH{portDomain, portDependency, headAccessor, tailAccessor} =
       [| if ($(lift portDomain), $(lift $ dependencyToEdge portDependency)) `elem` $(varE currentEventName) then
-          $(varE tailAccessor)
-        else
-          $(varE headAccessor) :- $(varE tailAccessor)
+           $(varE tailAccessor)
+         else
+           $(varE headAccessor) :- $(varE tailAccessor)
        |]
 
     makeUnmapping :: Name -> String -> ExpQ
@@ -497,31 +497,6 @@ moduleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs,
 
     dependencyToEdge DependentPort    = Falling
     dependencyToEdge NotDependentPort = Rising
-
-unfoldType :: Type -> Q ([String], [String])
-unfoldType (ForallT doms cxt arrow)
-  | null cxt = unfoldType arrow
-  | otherwise = error "expected no constraints"
-unfoldType typ = do
-  let (argTys, retTy) = unsnoc $ unfoldr (\case (AppT (AppT ArrowT arg) rest) -> (arg, Just rest); other -> (other, Nothing)) typ
-  argTyNames <- arrowNames argTys
-  pure (argTyNames, [])
-  where
-    -- annotated name, not the real name of the type
-    typeName (AppT (AppT (ConT tripleColon) (LitT (StrTyLit name))) _)
-      | nameBase tripleColon == ":::" = pure name
-      | otherwise = error "something else but triple colon encountered"
-    typeName _ = error "something completely wrong encountered"
-
-    arrowNames :: [Type] -> Q [String]
-    arrowNames = mapM typeName
-
-    -- taken from cabal-syntax Distribution.Utils.Generic
-    unsnoc :: NonEmpty a -> ([a], a)
-    unsnoc (x :| xs) = go x xs
-      where
-        go y [] = ([], x)
-        go y (z : zs) = let (ws, w) = go z zs in (y : ws, w)
 
 reorderTo :: [String] -> [(I.Port, a)] -> [(I.Port, a)]
 reorderTo dest orig = map (orig List.!!) ind
