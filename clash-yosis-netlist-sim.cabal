@@ -77,6 +77,7 @@ test-suite netlist-sim-inttest
         FlexibleInstances
     build-depends:
         base ^>=4.19.0.0,
+        unix,
         tasty,
         tasty-hunit,
         clash-prelude,

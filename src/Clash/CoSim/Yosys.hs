@@ -254,6 +254,8 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       markedDependentGroups = markDependentOutputs topLevel (specialSignalNames ++ nonCombIns)
       (nonDependent, dependentGroups) = both uniteDependentGroups $ List.partition ((== NotDependent) . snd) markedDependentGroups
       allDependentInputs = concatMap (dependencies . snd) dependentGroups
+      argDoms = Map.fromList $ map (, 0 :: Int) argTyNames
+      retDoms = Map.fromList $ map (, 0 :: Int) retTyNames
 
   name <- newName $ I.modName topLevel
   initStateName <- newName "initState"
