@@ -381,7 +381,10 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
                  ++ [ [valD [p| ($(varP clockTickOutMap), $(varP clockTickState)) |]
                       (normalB [| foldl (\(_, s) (domId, edge) -> tick ($(varE domIdToClockName) !! domId) (edgeToState edge) s Map.empty) (error "unused", $(varE lastStateName_Cycle)) $(varE currentTick) |]) [] ] ] )
                 [| ($(makeUnmapping $ map ((, clockTickOutMap) . I.pName . fst) reorderedOutputs), $(varE currentTick)) :
-                  ($(foldl appE [| $(varE goCycle) $(varE ticksCont) $(varE clockTickState) |] $ map (varE . snd . snd) nonClockInputs))
+                  ($(foldl appE
+                     [| $(varE goCycle) $(varE ticksCont) $(varE clockTickState) |]
+                     $ map (portCont currentTick)
+                     $ map (\(p, ns) -> ((argDoms Map.!) $ I.pName p, Falling, ns)) nonClockInputs))
                  |]
               ) [ valD (varP domIdToClockName) (normalB $ listE $ map (liftString . I.pName . fst) clockInputs) [] ] ]
           ] ]
@@ -440,6 +443,13 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
                 sourceInputs = $(makeMapping ticks inputs)
                 ($(varP outName), $(varP stateName)) = tick "" low $(varE prevStateName) sourceInputs
                 |])
+
+    portCont :: Name -> (Int, Edge, (Name, Name)) -> ExpQ
+    portCont currentEventName (portDomain, portComb, (h, t)) =
+      [| if ($(lift portDomain), $(lift portComb)) `elem` $(varE currentEventName) then
+          $(varE t)
+         else ($(varE h) :- $(varE t))
+       |]
 
     makeArrow argTys retTy = foldr (appT . appT arrowT) retTy argTys
 
