@@ -61,9 +61,8 @@ test-suite netlist-sim-inttest
     main-is: Main.hs
     other-modules:
         Test.Clash.Fibonacci
-        Test.Clash.ExternalLoop2
-        Test.Clash.ExternalLoop3
-        -- Test.Clash.ExternalLoop
+        Test.Clash.BlockRam
+        Test.Clash.LotsOfState
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver
@@ -76,7 +75,7 @@ test-suite netlist-sim-inttest
         ScopedTypeVariables
         FlexibleInstances
     build-depends:
-        base ^>=4.19.0.0,
+        base,
         unix,
         tasty,
         tasty-hunit,

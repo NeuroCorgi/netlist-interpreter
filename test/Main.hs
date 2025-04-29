@@ -44,10 +44,10 @@ tests = testGroup ""
   [ testGroup "synchronous"
     [ testCase "fibonacci" $ runTestbench Test.Clash.Fibonacci.testBench
     , testCase "blockRam" $ runTestbench Test.Clash.BlockRam.testBench
+    , testCase "lot of state" $ runTestbench Test.Clash.LotsOfState.testBench
     ]
   , testGroup "asynchronous"
-    [ testCase "lot of state" $ runTestbench Test.Clash.LotsOfState.testBench
-    ]
+    []
   --   testFile "lotsOfState"
   --   testFile "fibonacci"
   -- , testFile "genericBitPack"
