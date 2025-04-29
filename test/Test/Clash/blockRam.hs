@@ -1,7 +1,3 @@
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.Normalise       #-}
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.Extra.Solver    #-}
-
 module Test.Clash.BlockRam where
 
 import Clash.Prelude
