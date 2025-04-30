@@ -65,6 +65,7 @@ test-suite netlist-sim-inttest
         Test.Clash.Fibonacci
         Test.Clash.BlockRam
         Test.Clash.LotsOfState
+        Test.Clash.T1669
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver

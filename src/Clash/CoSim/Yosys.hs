@@ -396,11 +396,12 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       sig <- (sigD name [t| Clash.Signal.KnownDomain $(varT dom) => $(makeArrow argTys outTy) |])
       return [sig, dec]
     _ -> do
-      let (inputPatterns, acss, argTys) = convertInputs Nothing $ reorderTo argTyNames markedInputs
+      let reorderedInputs = reorderTo argTyNames markedInputs
+          (inputPatterns, acss, argTys) = convertInputs Nothing $ reorderedInputs
           reorderedOutputs = reorderTo retTyNames markedOutputs
           outTy = convertOutputs Nothing reorderedOutputs
 
-          inputNames = map (I.pName . fst) markedInputs
+          inputNames = map (I.pName . fst) reorderedInputs
           otherInputs = filter (`notElem` allDependentInputs) inputNames
           inputNameMap = Map.fromList $ zip inputNames (map fst acss)
           dummyDomainEvent = triple (const 0) (const Rising)
@@ -420,7 +421,9 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       let outStateNameMap = Map.fromList $ map (first I.pName) $ concat groupsOutStateNames
       dec <- funD name
         [clause inputPatterns
-         (normalB
+         (normalB $
+           appE
+           (unTupE (length reorderedOutputs))
            (letE
             (map pure $ concat (nonDepInputsSet : groupsEvalDec) )
             (makeUnmapping (map ((id &&& (outStateNameMap Map.!)) . I.pName . fst) reorderedOutputs)))
@@ -431,6 +434,9 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
   where
     tupE' [single] = single
     tupE' multi = tupE multi
+
+    unTupE 1 = accs 1 0
+    unTupE _ = [| id |]
 
     withInstNormalB inst body = guardedB
       [ (,) <$> normalG [| clashSimulation |] <*> body
