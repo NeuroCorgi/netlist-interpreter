@@ -307,7 +307,7 @@ type UnaryBVFun a = BitVector -> BitVector -> Memory a -> Memory a
 unaryFunc :: MemoryLike a => (BitA -> BitA) -> UnaryBVFun a
 unaryFunc f a y mem =
   let to = extend (bvLength y)
-      ab = to $ mem ! a
+      ab = mem ! a
    in mem // (y, to $ f ab)
 
 -- | Logical Not

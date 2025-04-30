@@ -87,15 +87,20 @@ class ClockTick t where
 instance ClockTick [[(Int, Edge)]] where
   ticks' rawClocks = go clocks
     where
-      -- Clocks are prepended to the list, reverse it to not get confused with clock domain indexes
-      clocks = List.zip4 [0,1..] (reverse rawClocks) (repeat (0 :: Int64)) (repeat Rising)
+      clocks = List.zip4
+        [0,1..] -- clock index
+        (reverse rawClocks) -- clock signals are prepended, reverse them, so the indices are correct
+        (repeat (0 :: Int64)) -- current time of a clock, starting from 0
+        (repeat Rising) -- current edge of the clock, starting from Rising edge at the beggining of time
 
-      go clocks =
-        let m = List.minimum $ map $(accs 4 2) clocks
-            (a, b) = List.partition ((== m) . $(accs 4 2)) clocks
-        in map ($(accs 4 0) &&& $(accs 4 3)) a : go (map tickDom a ++ b)
+      go clocks = map ($(accs 4 0) &&& $(accs 4 3)) currentEvents : go (map tickDom currentEvents ++ futureEvents)
         where
-          tickDom (ind, t : tr, absT, edge) = (ind, tr, absT + t, oppositeEdge edge)
+          currentTime = List.minimum $ map $(accs 4 2) clocks
+          (currentEvents, futureEvents) = List.partition ((== currentTime) . $(accs 4 2)) clocks
+
+          -- tick one clock period
+          tickDom (ind, currentPeriod : nextPeriods, absT, edge) =
+            (ind, nextPeriods, absT + currentPeriod, oppositeEdge edge)
           tickDom (_, [], _, _) = error "clock periods should never exhaust"
 
 instance (ClockTick t, Clash.Signal.KnownDomain dom) => ClockTick (Clash.Signal.Clock dom -> t) where
@@ -254,6 +259,8 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       markedDependentGroups = markDependentOutputs topLevel (specialSignalNames ++ nonCombIns)
       (nonDependent, dependentGroups) = both uniteDependentGroups $ List.partition ((== NotDependent) . snd) markedDependentGroups
       allDependentInputs = concatMap (dependencies . snd) dependentGroups
+      argDoms = Map.fromList $ map (, 0 :: Int) argTyNames
+      retDoms = Map.fromList $ map (, 0 :: Int) retTyNames
 
   name <- newName $ I.modName topLevel
   initStateName <- newName "initState"
@@ -346,7 +353,7 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
            (\i (port, _) ->
              [| Clash.Signal.fromList
                 $ map ($(accs (length reorderedOutputs) i) . fst)
-                $ filter ((($(lift $ retDoms Map.! I.pName port), Rising) `elem`) . snd)
+                $ filter ((($(lift $ retDoms Map.! I.pName port), Falling) `elem`) . snd)
                 $ $(varE signal) |])
            [0,1..] reorderedOutputs)
            -- [| $(unzipFN (length reorderedOutputs)) $ $(varE signal) |] )
@@ -364,7 +371,7 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
                   : map pure nonDepEval_Init
                   : [valD (varP initOutMap) (normalB [| peek $(varE nonDepState_Init) |] ) []]
                   : map (map pure) dependentEval_Init) )
-                [| ($(makeUnmapping $ map ((, initOutMap) . I.pName . fst) reorderedOutputs), [(i, Rising) | i <- [0.. $(lift $ length clockInputs) - 1]]) :
+                [| ($(makeUnmapping $ map ((, initOutMap) . I.pName . fst) reorderedOutputs), [(i, Falling) | i <- [0.. $(lift $ length clockInputs) - 1]]) :
                   ($(foldl appE [| $(varE goCycle) $(varE ticks) $(varE lastStateName_Init) |] $ map (varE . snd . snd) nonClockInputs))
                  |]
               ) [] ]
@@ -379,18 +386,22 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
                  ++ [ [valD [p| ($(varP clockTickOutMap), $(varP clockTickState)) |]
                       (normalB [| foldl (\(_, s) (domId, edge) -> tick ($(varE domIdToClockName) !! domId) (edgeToState edge) s Map.empty) (error "unused", $(varE lastStateName_Cycle)) $(varE currentTick) |]) [] ] ] )
                 [| ($(makeUnmapping $ map ((, clockTickOutMap) . I.pName . fst) reorderedOutputs), $(varE currentTick)) :
-                  ($(foldl appE [| $(varE goCycle) $(varE ticksCont) $(varE clockTickState) |] $ map (varE . snd . snd) nonClockInputs))
+                  ($(foldl appE
+                     [| $(varE goCycle) $(varE ticksCont) $(varE clockTickState) |]
+                     $ map (portCont currentTick)
+                     $ map (\(p, ns) -> ((argDoms Map.!) $ I.pName p, Falling, ns)) nonClockInputs))
                  |]
               ) [ valD (varP domIdToClockName) (normalB $ listE $ map (liftString . I.pName . fst) clockInputs) [] ] ]
           ] ]
       sig <- (sigD name [t| Clash.Signal.KnownDomain $(varT dom) => $(makeArrow argTys outTy) |])
       return [sig, dec]
     _ -> do
-      let (inputPatterns, acss, argTys) = convertInputs Nothing $ reorderTo argTyNames markedInputs
+      let reorderedInputs = reorderTo argTyNames markedInputs
+          (inputPatterns, acss, argTys) = convertInputs Nothing $ reorderedInputs
           reorderedOutputs = reorderTo retTyNames markedOutputs
           outTy = convertOutputs Nothing reorderedOutputs
 
-          inputNames = map (I.pName . fst) markedInputs
+          inputNames = map (I.pName . fst) reorderedInputs
           otherInputs = filter (`notElem` allDependentInputs) inputNames
           inputNameMap = Map.fromList $ zip inputNames (map fst acss)
           dummyDomainEvent = triple (const 0) (const Rising)
@@ -410,7 +421,9 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
       let outStateNameMap = Map.fromList $ map (first I.pName) $ concat groupsOutStateNames
       dec <- funD name
         [clause inputPatterns
-         (normalB
+         (normalB $
+           appE
+           (unTupE (length reorderedOutputs))
            (letE
             (map pure $ concat (nonDepInputsSet : groupsEvalDec) )
             (makeUnmapping (map ((id &&& (outStateNameMap Map.!)) . I.pName . fst) reorderedOutputs)))
@@ -421,6 +434,9 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
   where
     tupE' [single] = single
     tupE' multi = tupE multi
+
+    unTupE 1 = accs 1 0
+    unTupE _ = [| id |]
 
     withInstNormalB inst body = guardedB
       [ (,) <$> normalG [| clashSimulation |] <*> body
@@ -438,6 +454,13 @@ externalComponent (argTyNames, retTyNames) filePath ModuleOptions{topEntityName=
                 sourceInputs = $(makeMapping ticks inputs)
                 ($(varP outName), $(varP stateName)) = tick "" low $(varE prevStateName) sourceInputs
                 |])
+
+    portCont :: Name -> (Int, Edge, (Name, Name)) -> ExpQ
+    portCont currentEventName (portDomain, portComb, (h, t)) =
+      [| if ($(lift portDomain), $(lift portComb)) `elem` $(varE currentEventName) then
+          $(varE t)
+         else ($(varE h) :- $(varE t))
+       |]
 
     makeArrow argTys retTy = foldr (appT . appT arrowT) retTy argTys
 

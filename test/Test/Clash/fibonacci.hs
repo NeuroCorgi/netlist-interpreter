@@ -1,14 +1,12 @@
 module Test.Clash.Fibonacci where
 
 import Prelude hiding (not)
-module Test.Clash.Fibonacci where
 
 import Clash.Prelude
 import Clash.Explicit.Testbench
 import Clash.CoSim.Yosys
 
 topEntity :: KnownDomain dom => Clock dom -> Reset dom -> Enable dom -> Signal dom (Unsigned 64)
-topEntity clk rst en = fmap unpack $ $(externalComponentE "test/verilog/fibonacci.v" defaultOptions) clk rst en
 topEntity clk rst en = fmap unpack $ $(externalComponentE (["eta", "eta1", "eta2"], ["result"]) "test/verilog/fibonacci.v" defaultOptions) clk rst en
 
 testBench :: Signal System Bool
