@@ -28,7 +28,7 @@ library
     default-language: Haskell2010
     ghc-options:      -Wall
     build-depends:
-        base ^>=4.19.0.0,
+        base,
         containers,
         aeson,
         text,
@@ -39,7 +39,7 @@ library
         temporary,
         process,
         template-haskell,
-        clash-prelude >= 1.0.0,
+        clash-prelude >= 1.8.0,
         sqlite-simple,
         hashable,
         transformers
@@ -51,7 +51,7 @@ test-suite netlist-sim-unittest
     default-language: Haskell2010
     ghc-options:      -Wall
     build-depends:
-        base ^>=4.19.0.0,
+        base,
         tasty,
         tasty-hunit,
         clash-yosys-netlist-sim
@@ -61,9 +61,9 @@ test-suite netlist-sim-inttest
     main-is: Main.hs
     other-modules:
         Test.Clash.Fibonacci
-        Test.Clash.ExternalLoop2
-        Test.Clash.ExternalLoop3
-        -- Test.Clash.ExternalLoop
+        Test.Clash.LotsOfState
+        Test.Clash.BlockRam
+        Test.Clash.T1669
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver
@@ -76,9 +76,10 @@ test-suite netlist-sim-inttest
         ScopedTypeVariables
         FlexibleInstances
     build-depends:
-        base ^>=4.19.0.0,
+        base,
         tasty,
         tasty-hunit,
+        unix,
         clash-prelude,
         containers,
         clash-yosys-netlist-sim,

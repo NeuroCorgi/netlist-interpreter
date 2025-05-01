@@ -5,7 +5,6 @@
 module Clash.CoSim.Yosys.Internal
   ( Role(..)
   , markRolesForInputs
-  , reorder
   -- * Dependent group detection
   , CombDependent(..)
   , dependencies
@@ -40,6 +39,7 @@ data Role
   | Enable
   | Other
   deriving Eq
+
 -- unfoldType :: Type -> Q ([(String, Role)], [String])
 -- unfoldType (ForallT doms cxt arrow)
 --   | null cxt = unfoldType arrow
@@ -217,8 +217,8 @@ data ModuleSection = ModuleSection
 emptyModuleSection :: String -> ModuleSection
 emptyModuleSection output = ModuleSection S.empty output IS.empty
 
-splitModule :: Module -> [String] -> [Module]
-splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} _ = mods
+splitModule :: Module -> [Module]
+splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} = mods
   where
     sourceOrigin :: IM.IntMap Origin
     sourceOrigin = IM.fromList (inputsOrigin ++ cellOutputsOrigin)
@@ -226,26 +226,25 @@ splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} _ =
     inputsOrigin = concatMap ( uncurry (\s-> map (, ModInput s)) . (pName &&& wires . pBits)) inputs
     cellOutputsOrigin = concat $ V.toList $ V.imap (\i -> map (, CellOut i) . concatMap wires . Map.elems . cOutputs) cells
 
-    mods = map (\Port{pName=name, pBits=bits} -> sectionToModule $ singleSection IS.empty (emptyModuleSection name) $ wires bits) outputs
+    mods = map (\Port{pName=name, pBits=bits} -> sectionToModule $ singleSection IS.empty (emptyModuleSection name) $ IS.fromList $ wires bits) outputs
 
-    singleSection :: IS.IntSet -> ModuleSection -> [Int] -> ModuleSection
-    singleSection _ modSect [] = modSect
-    singleSection visited modSect outs = singleSection newVisited modSect' newOuts
+    singleSection :: IS.IntSet -> ModuleSection -> IS.IntSet -> ModuleSection
+    singleSection visited modSect outs
+      | outs == IS.empty = modSect
+      | otherwise = singleSection newVisited modSect' newOuts
       where
         (modSect', sources) = List.mapAccumL
           (\sect out ->
              case sourceOrigin IM.! out of
                CellOut i -> (sect{msCells=IS.insert i (msCells sect)}, Just (concatMap wires . Map.elems . cInputs $ cells V.! i))
                ModInput s -> (sect{msInputs=S.insert s (msInputs sect)}, Nothing)
-          ) modSect outs
+          ) modSect $ IS.toList outs
 
-        newVisited = foldr IS.insert visited outs
-        newOuts = concatMap (filter (not . (`IS.member` visited))) (catMaybes sources)
+        newVisited = IS.union visited outs
+        newOuts = IS.fromList $ concatMap (filter (not . (`IS.member` visited))) (catMaybes sources)
 
     sectionToModule :: ModuleSection -> Module
     sectionToModule ModuleSection{msInputs, msOutput, msCells} =
-      let cs = trace ("Cells: " ++ show msCells) msCells
-      in
       mod{ modInputs = filter ((`S.member` msInputs) . pName) inputs
          , modOutputs = filter ((== msOutput) . pName) outputs
-         , modCells = V.fromList $ map (cells V.!) $ IS.elems cs }
+         , modCells = V.fromList $ map (cells V.!) $ IS.elems msCells }

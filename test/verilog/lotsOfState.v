@@ -8,12 +8,13 @@ module topEntity
       input wire  eta // clock
     , input wire  eta1 // reset
     , input wire  eta2 // enable
-    , input wire [7:0] eta4
+    , input wire [7:0] eta_0
 
       // Outputs
     , output wire [7:0] result
     );
   reg [3:0] c$ds_app_arg = 4'd0;
+  wire [11:0] result_1;
   wire [11:0] c$case_alt;
   wire [11:0] c$case_alt_0;
   wire [11:0] c$case_alt_1;
@@ -35,7 +36,7 @@ module topEntity
   reg  c$app_arg_7;
   reg  c$app_arg_8;
   reg  c$app_arg_9;
-  wire [11:0] result_1;
+  wire signed [63:0] c$case_scrut;
 
   // register begin
   always @(posedge eta or  posedge  eta1) begin : c$ds_app_arg_register
@@ -49,116 +50,117 @@ module topEntity
 
   assign result = result_1[7:0];
 
-  assign c$case_alt = (c$app_arg_8 & (eta4 == 8'd2)) ? {4'd2,
-                                                        8'd2} : c$case_alt_0;
+  assign result_1 = (c$app_arg_9 & (eta_0 == 8'd1)) ? {4'd1,
+                                                       8'd1} : c$case_alt;
 
-  assign c$case_alt_0 = (c$app_arg_7 & (eta4 == 8'd3)) ? {4'd3,
-                                                          8'd3} : c$case_alt_1;
+  assign c$case_alt = (c$app_arg_8 & (eta_0 == 8'd2)) ? {4'd2,
+                                                         8'd2} : c$case_alt_0;
 
-  assign c$case_alt_1 = (c$app_arg_6 & (eta4 == 8'd4)) ? {4'd4,
-                                                          8'd4} : c$case_alt_2;
+  assign c$case_alt_0 = (c$app_arg_7 & (eta_0 == 8'd3)) ? {4'd3,
+                                                           8'd3} : c$case_alt_1;
 
-  assign c$case_alt_2 = (c$app_arg_5 & (eta4 == 8'd5)) ? {4'd5,
-                                                          8'd5} : c$case_alt_3;
+  assign c$case_alt_1 = (c$app_arg_6 & (eta_0 == 8'd4)) ? {4'd4,
+                                                           8'd4} : c$case_alt_2;
 
-  assign c$case_alt_3 = (c$app_arg_4 & (eta4 == 8'd6)) ? {4'd6,
-                                                          8'd6} : c$case_alt_4;
+  assign c$case_alt_2 = (c$app_arg_5 & (eta_0 == 8'd5)) ? {4'd5,
+                                                           8'd5} : c$case_alt_3;
 
-  assign c$case_alt_4 = (c$app_arg_3 & (eta4 == 8'd7)) ? {4'd7,
-                                                          8'd7} : c$case_alt_5;
+  assign c$case_alt_3 = (c$app_arg_4 & (eta_0 == 8'd6)) ? {4'd6,
+                                                           8'd6} : c$case_alt_4;
 
-  assign c$case_alt_5 = (c$app_arg_2 & (eta4 == 8'd8)) ? {4'd8,
-                                                          8'd8} : c$case_alt_6;
+  assign c$case_alt_4 = (c$app_arg_3 & (eta_0 == 8'd7)) ? {4'd7,
+                                                           8'd7} : c$case_alt_5;
 
-  assign c$case_alt_6 = (c$app_arg_1 & (eta4 == 8'd9)) ? {4'd9,
-                                                          8'd9} : c$case_alt_7;
+  assign c$case_alt_5 = (c$app_arg_2 & (eta_0 == 8'd8)) ? {4'd8,
+                                                           8'd8} : c$case_alt_6;
 
-  assign c$case_alt_7 = (c$app_arg_0 & (eta4 == 8'd10)) ? {4'd10,
-                                                           8'd10} : c$case_alt_8;
+  assign c$case_alt_6 = (c$app_arg_1 & (eta_0 == 8'd9)) ? {4'd9,
+                                                           8'd9} : c$case_alt_7;
 
-  assign c$case_alt_8 = (c$app_arg & (eta4 == 8'd11)) ? {4'd0,
-                                                         8'd11} : {c$ds_app_arg,   8'd0};
+  assign c$case_alt_7 = (c$app_arg_0 & (eta_0 == 8'd10)) ? {4'd10,
+                                                            8'd10} : c$case_alt_8;
+
+  assign c$case_alt_8 = (c$app_arg & (eta_0 == 8'd11)) ? {4'd0,
+                                                          8'd11} : {c$ds_app_arg,   8'd0};
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b1010 : c$app_arg = 1'b1;
+    case(c$case_scrut)
+      64'sd10 : c$app_arg = 1'b1;
       default : c$app_arg = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b1001 : c$app_arg_0 = 1'b1;
+    case(c$case_scrut)
+      64'sd9 : c$app_arg_0 = 1'b1;
       default : c$app_arg_0 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b1000 : c$app_arg_1 = 1'b1;
+    case(c$case_scrut)
+      64'sd8 : c$app_arg_1 = 1'b1;
       default : c$app_arg_1 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0111 : c$app_arg_2 = 1'b1;
+    case(c$case_scrut)
+      64'sd7 : c$app_arg_2 = 1'b1;
       default : c$app_arg_2 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0110 : c$app_arg_3 = 1'b1;
+    case(c$case_scrut)
+      64'sd6 : c$app_arg_3 = 1'b1;
       default : c$app_arg_3 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0101 : c$app_arg_4 = 1'b1;
+    case(c$case_scrut)
+      64'sd5 : c$app_arg_4 = 1'b1;
       default : c$app_arg_4 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0100 : c$app_arg_5 = 1'b1;
+    case(c$case_scrut)
+      64'sd4 : c$app_arg_5 = 1'b1;
       default : c$app_arg_5 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0011 : c$app_arg_6 = 1'b1;
+    case(c$case_scrut)
+      64'sd3 : c$app_arg_6 = 1'b1;
       default : c$app_arg_6 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0010 : c$app_arg_7 = 1'b1;
+    case(c$case_scrut)
+      64'sd2 : c$app_arg_7 = 1'b1;
       default : c$app_arg_7 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0001 : c$app_arg_8 = 1'b1;
+    case(c$case_scrut)
+      64'sd1 : c$app_arg_8 = 1'b1;
       default : c$app_arg_8 = 1'b0;
     endcase
   end
 
   always @(*) begin
-    case(c$ds_app_arg)
-      4'b0000 : c$app_arg_9 = 1'b1;
+    case(c$case_scrut)
+      64'sd0 : c$app_arg_9 = 1'b1;
       default : c$app_arg_9 = 1'b0;
     endcase
   end
 
-  assign result_1 = (c$app_arg_9 & (eta4 == 8'd1)) ? {4'd1,
-                                                      8'd1} : c$case_alt;
+  assign c$case_scrut = $unsigned(c$ds_app_arg);
 
 
 endmodule
-
