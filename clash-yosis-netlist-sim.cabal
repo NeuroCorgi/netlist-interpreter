@@ -24,6 +24,9 @@ library
         Internal.Util
         Clash.CoSim.Yosys.Util
         Clash.CoSim.Yosys.Internal
+        Paths_clash_yosys_netlist_sim
+    autogen-modules:
+        Paths_clash_yosys_netlist_sim
     hs-source-dirs:   src
     default-language: Haskell2010
     ghc-options:      -Wall
@@ -64,6 +67,9 @@ test-suite netlist-sim-inttest
         Test.Clash.LotsOfState
         Test.Clash.BlockRam
         Test.Clash.T1669
+        Test.Clash.ExternalLoop
+        Test.Clash.ExternalLoop2
+        Test.Clash.ExternalLoop3
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver

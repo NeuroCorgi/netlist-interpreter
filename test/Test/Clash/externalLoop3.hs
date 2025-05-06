@@ -1,16 +1,13 @@
+-- {-# OPTIONS_GHC -ddump-splices #-}
+
 module Test.Clash.ExternalLoop3 where
 
-import Clash.Prelude
+import Clash.Explicit.Prelude
+import Clash.Explicit.Testbench
+
 import Clash.CoSim.Yosys
 
-t1 (a, _, _) = a
-t2 (_, b, _) = b
-t3 (_, _, c) = c
-
-unzip3Signal :: Signal dom (a, b, c) -> (Signal dom a, Signal dom b, Signal dom c)
-unzip3Signal s = (t1 <$> s, t2 <$> s, t3 <$> s)
-
-type I = BitVector 64
+type I = BitVector 2
 
 -- external
 --   :: KnownDomain dom
@@ -29,9 +26,30 @@ external :: KnownDomain dom
   -> (Signal dom I, Signal dom I, Signal dom I)
 external clk a b c = (d, e, f)
   where
-    (d, e, f) = $(externalComponentE (["clk", "a", "b", "c"], ["d", "e", "f"]) "test/verilog/externalLoop3.v" defaultOptions) clk (fmap pack a) (fmap pack b) (fmap pack c)
+    (d, e, f) = $(externalComponentE (["clk", "a", "b", "c"], ["d", "e", "f"]) "test/verilog/externalLoop3.v" defaultOptions{parameters=[("width", "2")]})
+      clk (fmap pack a) (fmap pack b) (fmap pack c)
 
-topEntity :: KnownDomain dom => Clock dom -> Signal dom I -> Signal dom I
-topEntity clk a = f
+external' :: KnownDomain dom
+  => Clock dom
+  -> Signal dom I
+  -> Signal dom I
+  -> Signal dom I
+  -> (Signal dom I, Signal dom I, Signal dom I)
+external' clk a b c = (a, b, c)
+
+topEntity :: KnownDomain dom => Clock dom -> Signal dom I -> Signal dom (I, I, I)
+topEntity clk a = (,,) <$> d <*> e <*> f
   where
     (d, e, f) = external clk a d e
+
+testBench :: Signal System Bool
+testBench = done
+  where
+    samples = 0 :> 1 :> 2 :> Nil
+
+    expectedOutput = outputVerifier' clk rst $ zip3 samples samples samples
+    done = expectedOutput $ topEntity clk (stimuliGenerator clk rst samples)
+    clk = tbSystemClockGen (not <$> done)
+    rst = systemResetGen
+    en = enableGen
+
