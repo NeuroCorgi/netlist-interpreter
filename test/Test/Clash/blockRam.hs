@@ -2,6 +2,8 @@ module Test.Clash.BlockRam where
 
 import Clash.Prelude
 import Clash.Explicit.Testbench
+import Clash.Explicit.Testbench.Extra
+
 import Clash.CoSim.Yosys
 
 topEntity
@@ -31,16 +33,16 @@ samples =
   :> (3, Nothing     , 11)
   :> Nil
 
-testBench :: Signal System Bool
+testBench :: Signal System (Bool, AssertResult)
 testBench = done
   where
     (rd, wrM, expect) = unzip3 samples
     rdInput = stimuliGenerator clk rst rd
     wrMInput = stimuliGenerator clk rst wrM
     expectedOutput =
-      outputVerifier' clk rst $ zip expect expect
+      outputVerifierT clk rst $ zip expect expect
     done = expectedOutput $ ignoreFor clk rst en d1 (15, 15) $
              topEntity clk en rdInput wrMInput
-    clk = tbSystemClockGen (not <$> done)
+    clk = tbSystemClockGen ((not . fst) <$> done)
     rst = systemResetGen
     en = enableGen

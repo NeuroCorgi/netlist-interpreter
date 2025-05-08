@@ -146,18 +146,22 @@ dependencies NotDependent = []
 dependencies (Combinatorial s) = s
 
 uniteDependentGroups :: [(a, CombDependent)] -> [([a], CombDependent)]
-uniteDependentGroups [] = []
-uniteDependentGroups (x : xs) = go (first List.singleton x) xs
+uniteDependentGroups a = []
   where
-    go only [] = [only]
-    go (a, c) xs
-      | not $ null group = go this' rest
-      | otherwise = this' : uniteDependentGroups xs
+
+    uniteDependentGroups' :: [([a], CombDependent)] -> [(a, CombDependent)] -> [([a], CombDependent)]
+    uniteDependentGroups' a [] = a
+    uniteDependentGroups' acc (x : xs) = go (first List.singleton x) xs
       where
-        this = dependencies c
-        this' = (a ++ as, combineGroup (c : combs))
-        (group, rest) = List.partition (not . null . List.intersect this . dependencies . snd) xs
-        (as, combs) = unzip group
+        go only [] = [only]
+        go (a, c) xs
+          | not $ null group = go this' rest
+          | otherwise = uniteDependentGroups' (this' : acc) xs
+          where
+            this = dependencies c
+            this' = (a ++ as, combineGroup (c : combs))
+            (group, rest) = List.partition (not . null . List.intersect this . dependencies . snd) xs
+            (as, combs) = unzip group
 
 -- | Mark groups of outputs depending on which inputs they depend on.
 --

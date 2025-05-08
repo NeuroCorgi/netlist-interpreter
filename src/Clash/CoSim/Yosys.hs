@@ -38,17 +38,15 @@ where
 import Language.Haskell.TH hiding (Role)
 import Language.Haskell.TH.Syntax (lift, liftString, liftData, Lift)
 
-import Control.Arrow (first, (&&&))
+import Control.Arrow ((&&&))
 import Control.Monad (zipWithM)
 
 import Data.Int (Int64)
 import Data.Coerce (coerce)
 
-import Data.Traversable (mapAccumM)
 import Data.Maybe (fromJust, mapMaybe, catMaybes)
 import qualified Data.Map as Map (Map, fromList, empty, (!))
 import qualified Data.List as List
-import Data.List.NonEmpty (toList, unfoldr, NonEmpty((:|)))
 
 import Data.Vector (Vector)
 import qualified Data.Vector as V (singleton)
@@ -62,7 +60,6 @@ import qualified Clash.Signal.Internal as CLK (Clock(..))
 import qualified Clash.Signal (KnownDomain, Signal, Clock, Reset, Enable, fromEnable, fromList, unsafeToActiveHigh, sample)
 import qualified Clash.Sized.BitVector (BitVector)
 
-import Clash.Promoted.Symbol (ssymbolToString)
 import Clash.Promoted.Nat (snatToNum)
 
 import qualified Intermediate as I
@@ -70,10 +67,10 @@ import qualified Memory as M
 import qualified Interpreter as C
 import qualified Util as U
 
-import Internal.Util
-
 import Clash.CoSim.Yosys.Internal
 import Clash.CoSim.Yosys.Util
+
+-- import Debug.Trace
 
 data Edge = Rising | Falling deriving (Eq, Show, Lift)
 
@@ -85,17 +82,22 @@ class ClockTick t where
   ticks' :: [[Int64]] -> t
 
 instance ClockTick [[(Int, Edge)]] where
-  ticks' rawClocks = go clocks
+  ticks' rawClocks = go clockStates
     where
-      -- Clocks are prepended to the list, reverse it to not get confused with clock domain indexes
-      clocks = List.zip4 [0,1..] (reverse rawClocks) (repeat (0 :: Int64)) (repeat Rising)
+      clockStates = List.zip4
+        [0,1..] -- clock index
+        (reverse rawClocks) -- clock signals are prepended, reverse them, so the indices are correct
+        (repeat (0 :: Int64)) -- current time of a clock, starting from 0
+        (repeat Rising) -- current edge of the clock, starting from Rising edge at the beggining of time
 
-      go clocks =
-        let m = List.minimum $ map $(accs 4 2) clocks
-            (a, b) = List.partition ((== m) . $(accs 4 2)) clocks
-        in map ($(accs 4 0) &&& $(accs 4 3)) a : go (map tickDom a ++ b)
+      go clocks = map ($(accs 4 0) &&& $(accs 4 3)) currentEvents : go (map tickDom currentEvents ++ futureEvents)
         where
-          tickDom (ind, t : tr, absT, edge) = (ind, tr, absT + t, oppositeEdge edge)
+          currentTime = List.minimum $ map $(accs 4 2) clocks
+          (currentEvents, futureEvents) = List.partition ((== currentTime) . $(accs 4 2)) clocks
+
+          -- tick one clock period
+          tickDom (ind, currentPeriod : nextPeriods, absT, edge) =
+            (ind, nextPeriods, absT + currentPeriod, oppositeEdge edge)
           tickDom (_, [], _, _) = error "clock periods should never exhaust"
 
 instance (ClockTick t, Clash.Signal.KnownDomain dom) => ClockTick (Clash.Signal.Clock dom -> t) where
@@ -142,9 +144,6 @@ edgeToState Falling = low
 -- so users do not need to import the wrapped functions themselves
 compile :: I.Module -> C.Design
 compile = U.compile
-
-peek :: C.Design -> Map.Map String (Vector M.Bit)
-peek = C.peek
 
 mapFromList :: Ord k => [(k, v)] -> Map.Map k v
 mapFromList = Map.fromList
@@ -256,10 +255,10 @@ externalComponent (argTyNameDom, retTyNameDom) filePath ModuleOptions{topEntityN
       mods = splitModule topLevel
       reorderedModules = reorderModsTo retTyNames mods
 
+      reorderedInputs = reorderTo argTyNames markedInputs
+      reorderedOutputs = reorderTo retTyNames markedOutputs
+
   name <- newName $ I.modName topLevel
-  -- initStateName <- newName "initState"
-  -- let initD = valD (varP initStateName) (normalB [| undefined |]) []
-  -- let initD = valD (varP initStateName) (normalB [| compile $(liftData topLevel) |]) []
 
   -- noinlineAnn <- pragInlD name NoInline FunLike AllPhases
   -- hasBlackBoxAnn <- pragAnnD (ValueAnnotation name) [| (HasBlackBox [] ()) |]
@@ -267,28 +266,18 @@ externalComponent (argTyNameDom, retTyNameDom) filePath ModuleOptions{topEntityN
   -- If there is something that resembles clock signal, then consider the design synchronous
   case maybeClockName of
     Just _ -> do
-      let dom = mkName "dom"
-          reorderedInputs = reorderTo argTyNames markedInputs
-          reorderedOutputs = reorderTo retTyNames markedOutputs
-          (inputPatterns, acss, argTys) = convertInputs (Just dom) reorderedInputs
-          outTy = convertOutputs (Just dom) reorderedOutputs
-
-      inputPorts <- zipWithM
-            (\(I.pName -> name, role) (head, tail) -> do
-                portSignal <- newName name
-                pure $ PortTH name role (argDoms Map.! name) DependentPort portSignal head tail)
-            reorderedInputs acss
-
       let
-        -- output ports do not need meaningful dependency and accessor names
-        outputPorts = map (\(I.pName -> name, role) -> PortTH name role (retDoms Map.! name) DependentPort (mkName "") (mkName "") (mkName "")) reorderedOutputs
-        portsMap = Map.fromList $ map (portName &&& id) (inputPorts ++ outputPorts)
-        clockInputPorts = List.sortBy (compare `on` portDomain) $ filter ((== Clock) . portRole) inputPorts
+        dom = mkName "dom"
+        (inputPatterns, acss, argTys) = convertInputs (Just dom) reorderedInputs
+        outTy = convertOutputs (Just dom) reorderedOutputs
+
+      (inputPorts, _, portsMap) <- makeIOPortsMap argDoms retDoms acss reorderedInputs reorderedOutputs
+      let clockInputPorts = List.sortBy (compare `on` portDomain) $ filter ((== Clock) . portRole) inputPorts
 
       clockEvents <- newName "clockTicks"
       clockNames <- newName "clockNames"
       dec <- funD name
-        [ clause inputPatterns (normalB $ tupE' $ map (synchronousModuleToTH clockEvents clockNames portsMap) reorderedModules)
+        [ clause inputPatterns (normalB $ tupE' $ map (synchModuleE clockEvents clockNames portsMap) reorderedModules)
           [ valD (varP clockEvents) (normalB $ foldl appE [| clockTicks |] $ map (varE . headAccessor) clockInputPorts ) []
           , valD (varP clockNames) (normalB $ listE $ map (liftString . portName) clockInputPorts) []
           ]
@@ -297,8 +286,27 @@ externalComponent (argTyNameDom, retTyNameDom) filePath ModuleOptions{topEntityN
       return [sig, dec]
 
     _ -> do
-      error "not supported"
+      let (inputPatterns, acss, argTys) = convertInputs Nothing $ reorderedInputs
+          outTy = convertOutputs Nothing reorderedOutputs
+
+      (_, _, portsMap) <- makeIOPortsMap argDoms retDoms acss reorderedInputs reorderedOutputs
+
+
+      dec <- funD name [ clause inputPatterns (normalB $ tupE' $ map (asyncModuleE portsMap) reorderedModules) [] ]
+      sig <- sigD name (makeArrow argTys outTy)
+      return [sig, dec]
   where
+    makeIOPortsMap argDoms retDoms acss inputs outputs = do
+      inputPorts <- zipWithM
+        (\(I.pName -> name, role) (sigHead, sigTail) -> do
+                portSignal <- newName name
+                pure $ PortTH name role (argDoms Map.! name) DependentPort portSignal sigHead sigTail)
+            inputs acss
+      -- output ports need no accessor names
+      let outputPorts = map (\(I.pName -> name, role) -> PortTH name role (retDoms Map.! name) DependentPort (mkName "") (mkName "") (mkName "")) outputs
+          portsMap = Map.fromList $ map (portName &&& id) (inputPorts ++ outputPorts)
+      pure (inputPorts, outputPorts, portsMap)
+
     tupE' [single] = single
     tupE' multi = tupE multi
 
@@ -334,24 +342,26 @@ externalComponentE types filePath modOptions = do
 
 data PortDependency = DependentPort | NotDependentPort deriving (Eq, Show)
 
+dependencyToEdge :: PortDependency -> Edge
+dependencyToEdge DependentPort    = Falling
+dependencyToEdge NotDependentPort = Rising
+
 data PortTH = PortTH
-  { portName :: String
-  , portRole :: Role
-  , portDomain :: Int
+  { portName       :: String
+  , portRole       :: Role
+  , portDomain     :: Int
   , portDependency :: PortDependency
-  , portSignalName :: Name
-  , headAccessor :: Name
-  , tailAccessor :: Name
+  , signalName     :: Name
+  , headAccessor   :: Name
+  , tailAccessor   :: Name
   }
 
 destructivePattern :: PortTH -> Q Pat
-destructivePattern PortTH{headAccessor, tailAccessor} =
-  [p| ~($(varP headAccessor) :- $(varP tailAccessor)) |]
+destructivePattern PortTH{ signalName, headAccessor, tailAccessor} =
+  asP signalName [p| ~($(varP headAccessor) :- $(varP tailAccessor)) |]
 
-newtype ModuleTH = ModuleTH { signal :: Q Exp }
-
-synchronousModuleToTH :: Name -> Name -> Map.Map String PortTH -> I.Module -> ExpQ
-synchronousModuleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs, I.modOutputs=outputs} = do
+synchModuleE :: Name -> Name -> Map.Map String PortTH -> I.Module -> ExpQ
+synchModuleE clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs, I.modOutputs=outputs} = do
   output <- case outputs of
     [output] -> pure (portMap Map.! I.pName output)
     _ -> error "separate modules expected to have only one output"
@@ -385,11 +395,14 @@ synchronousModuleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInp
       [ clause goPattern
         (normalB $
           letE
-          [ valD [p| ($(varP outMap), $(varP tempState)) |] (normalB [| tick "" low $(varE state) $(makeMapping Nothing $ filter (const True . (== NotDependentPort) . portDependency) portInputs) |]) []
-          , valD [p| (_, $(varP outState)) |] (normalB [| tick "" low $(varE tempState) $(makeMapping Nothing $ filter ((== DependentPort) . portDependency) portInputs) |]) []
+          [ valD [p| ($(varP outMap), $(varP outState)) |] (normalB [| tick "" low $(varE state) $(makeMapping Nothing portInputs) |]) []
+          -- , valD [p| (_, $(varP outState)) |] (normalB [| tick "" low $(varE tempState) $(makeMapping Nothing $ filter ((== DependentPort) . portDependency) portInputs) |]) []
           ]
+          -- Before first clock cycle is the same for all clock signals,
+          -- I don't want to check how many clock signals there are, so just generate an infinite list with all possible
           [| ($(makeUnmapping outMap outPortName), [(i, Falling) | i <- [0,1..]]) :
-             $(foldl appE [| $(varE cycleFunc) $(varE clockEventsName) $(varE tempState) |] $ map (varE . tailAccessor) portInputs)
+          -- [| traceShow ($(makeMapping Nothing portInputs)) $ ($(makeUnmapping outMap outPortName), [(i, Rising) | i <- [0,1..]]) :
+             $(foldl appE [| $(varE cycleFunc) $(varE clockEventsName) $(varE outState) |] $ map (varE . tailAccessor) portInputs)
            |]
         ) [] ]
     goCycle = funD cycleFunc
@@ -400,6 +413,7 @@ synchronousModuleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInp
          , valD [p| ($(varP clockTickOutMap), $(varP clockTickState)) |] (normalB [| foldl (\(_, s) (domId, edge) -> tick ($(varE clockNameMap) !! domId) (edgeToState edge) s Map.empty) (error "unused", $(varE outState)) $(varE currentClockEvents) |]) []
          ]
          [| ($(makeUnmapping clockTickOutMap outPortName), $(varE currentClockEvents)) :
+         -- [| traceShow ($(varE currentClockEvents), $(makeMapping Nothing portInputs)) $ ($(makeUnmapping clockTickOutMap outPortName), $(varE currentClockEvents)) :
             $(foldl appE [| $(varE cycleFunc) $(varE nextClockEvents) $(varE clockTickState) |] $ map (nextEventSignal currentClockEvents) portInputs )
           |]
         ) [] ]
@@ -413,31 +427,46 @@ synchronousModuleToTH clockEventsName clockNameMap portMap mod@I.Module{I.modInp
   where
     -- | Signal to pass to the next clock event
     -- if a signal was consumed at this event, pass tail further
-    -- otherwise leave the head
-    -- TODO: use lazy pattern, to not force deconstruction and reconstruction here
+    -- otherwise leave the signal unchanged
     nextEventSignal :: Name -> PortTH -> ExpQ
-    nextEventSignal currentEventName PortTH{portDomain, portDependency, headAccessor, tailAccessor} =
+    nextEventSignal currentEventName PortTH{portDomain, portDependency, tailAccessor, signalName} =
       [| if ($(lift portDomain), $(lift $ dependencyToEdge portDependency)) `elem` $(varE currentEventName) then
            $(varE tailAccessor)
          else
-           $(varE headAccessor) :- $(varE tailAccessor)
+           $(varE signalName)
        |]
 
-    makeUnmapping :: Name -> String -> ExpQ
-    makeUnmapping mapName portName = [| fromVectorBit (mapLookup $(varE mapName) $(liftString portName)) |]
+asyncModuleE :: Map.Map String PortTH -> I.Module -> ExpQ
+asyncModuleE portMap mod@I.Module{I.modInputs=inputs, I.modOutputs=outputs} = do
+  output <- case outputs of
+    [output] -> pure (portMap Map.! I.pName output)
+    _ -> error "separate modules expected to have only one output"
 
-    makeMapping :: Maybe Name -> [PortTH] -> ExpQ
-    makeMapping currentEventName inputs =
-      [| mapFromListMaybes
-         $(listE $ map
-            (\(PortTH{portName, portDomain, portDependency, headAccessor=a}) ->
-                [| if $(maybe [| True |] (\eventName -> [| ($(lift portDomain), $(lift $ dependencyToEdge portDependency)) `elem` $(varE eventName) |]) currentEventName) then
-                     Just ($(liftString portName), toVectorBit $(varE a))
-                   else Nothing
-                 |]) inputs) |]
+  let part = I.modName mod ++ "_part"
+  let portInputs = map ((portMap Map.!) . I.pName) inputs
 
-    dependencyToEdge DependentPort    = Falling
-    dependencyToEdge NotDependentPort = Rising
+  initName <- newName part
+  outputMapName <- newName "output"
+
+  letE
+    [ valD [p| ($(varP outputMapName), _) |] (normalB [| tick "" low $(varE initName) $(makeMapping Nothing portInputs) |]) []
+    , valD (varP initName) (normalB [| compile $(liftData mod) |]) []
+    -- , valD (varP initName) (normalB [| undefined |]) []
+    ]
+    (makeUnmapping outputMapName (portName output))
+
+makeMapping :: Maybe Name -> [PortTH] -> ExpQ
+makeMapping currentEventName inputs =
+  [| mapFromListMaybes
+     $(listE $ map
+        (\(PortTH{portName, portDomain, portDependency, headAccessor}) ->
+            [| if $(maybe [| True |] (\eventName -> [| ($(lift portDomain), $(lift $ dependencyToEdge portDependency)) `elem` $(varE eventName) |]) currentEventName) then
+                 Just ($(liftString portName), toVectorBit $(varE headAccessor))
+               else Nothing
+             |]) inputs) |]
+
+makeUnmapping :: Name -> String -> ExpQ
+makeUnmapping mapName portName = [| fromVectorBit (mapLookup $(varE mapName) $(liftString portName)) |]
 
 reorderTo :: [String] -> [(I.Port, a)] -> [(I.Port, a)]
 reorderTo dest orig = map (orig List.!!) ind
@@ -477,14 +506,14 @@ convertPort (Just d) (I.Port{..}, Enable) =
     [t| Clash.Signal.Enable $(varT d) |])
   where enName = mkName pName
         enSig = mkName (pName ++ "_tail")
-convertPort dom (I.Port{I.pName=portName, I.pBits=bits}, _)
+convertPort dom ((I.Port portName (length -> bitSize)), _)
   | Just d <- dom = (varP sigHead, (sigHead, sigTail), bv2signal d)
   | otherwise = (varP sigHead, (sigHead, sigHead), bv2type)
   where
     sigHead = mkName portName
     sigTail = mkName (portName ++ "_tail")
 
-    bv2type = [t| Clash.Sized.BitVector.BitVector $(fromIntegral $ length bits) |]
+    bv2type = [t| Clash.Sized.BitVector.BitVector $(fromIntegral bitSize) |]
     bv2signal d = [t| Clash.Signal.Signal $(varT d) $bv2type |]
 
 convertPorts :: Maybe Name -> [(I.Port, Role)] -> [(Q Pat, (Name, Name), Q Type)]
@@ -502,7 +531,7 @@ convertOutputs dom outs = ty
   -- | otherwise = ty
   where
     -- Discard patterns and accessor names as they are not needed for the output
-    ress = map (\(_, (name, _), c) -> c) $ convertPorts dom outs
+    ress = map (\(_, (_, _), c) -> c) $ convertPorts dom outs
 
     -- If there are multiple return values, construct a tuple
     ty = case ress of

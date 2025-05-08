@@ -40,7 +40,7 @@ lookupCache :: FilePath -> [(String, String)] -> IO (Either FilePath FilePath)
 lookupCache filePath parameters = do
   let params = intercalate "," $ map (\(param, value) -> param ++ ":" ++ value) parameters
   fileHash <- withFile filePath ReadMode ((hash . (params ++) . filter (not . isSpace)) <.> hGetContents')
-  dbPath <- getDataFileName "cache.db"
+  dbPath <- getDataFileName "designs/cache.db"
   conn <- open dbPath
   execute_ conn "CREATE TABLE IF NOT EXISTS designs (hash INTEGER PRIMARY KEY, filePath TEXT)"
   r <- query conn "SELECT filePath FROM designs WHERE hash = ?" [fileHash :: Int]

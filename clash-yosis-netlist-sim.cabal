@@ -70,6 +70,7 @@ test-suite netlist-sim-inttest
         Test.Clash.ExternalLoop
         Test.Clash.ExternalLoop2
         Test.Clash.ExternalLoop3
+        Clash.Explicit.Testbench.Extra
     hs-source-dirs: test
     default-language: Haskell2010
     ghc-options: -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver
@@ -85,7 +86,6 @@ test-suite netlist-sim-inttest
         base,
         tasty,
         tasty-hunit,
-        unix,
         clash-prelude,
         containers,
         clash-yosys-netlist-sim,
