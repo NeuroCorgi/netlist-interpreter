@@ -20,9 +20,6 @@ module Memory
     Bit(..),
     bit,
     stageUpdates,
-    -- mkBitVector,
-    -- bitView,
-    -- bitVector,
     bitString,
     extend,
     bvLength,
@@ -86,7 +83,7 @@ import Prelude hiding (not, or, and, all, (!!))
 
 import Control.Arrow (second)
 
-import Data.List (foldl1', find, sortBy)
+import Data.List (find, sortBy)
 -- import qualified Data.List as L
 
 import Data.Data (Data)
@@ -96,8 +93,6 @@ import qualified Data.Vector as V
 -- import qualified Data.Array.Utils as AU
 
 import Data.Maybe (fromMaybe, mapMaybe, isJust, catMaybes)
-
-import Data.Typeable (Typeable)
 
 import Data.IntMap (IntMap)
 import qualified Data.IntMap as IM
@@ -229,8 +224,6 @@ data (MemoryLike a) => Memory a =
   { mMemory :: a Bit
   , mUpMemory :: a Bit
   , mUpdated :: [[(Int, Edge)]]
-  , mSubMem :: [a Bit]
-  , mSubDes :: [a Bit]
   }
 
 stageUpdates :: (MemoryLike a) => Memory a -> Memory a
@@ -246,13 +239,11 @@ stageUpdates unstaged@Memory{..} = unstaged{mMemory = newMemory, mUpMemory = new
 
 deriving instance (MemoryLike a, Show (a Bit)) => Show (Memory a)
 
-empty :: Int -> [Int] -> [Int] -> Memory Vector
-empty n submem subdes = Memory
+empty :: Int -> Memory Vector
+empty n = Memory
   { mMemory = V.replicate (n + 1) Z
   , mUpMemory = V.replicate (n + 1) Z
   , mUpdated = []
-  , mSubMem = map (\n -> V.replicate (n + 1) Z) submem
-  , mSubDes = map (\n -> V.replicate (n + 1) Z) subdes
   }
 
 clearUpdated :: (MemoryLike a) => Memory a -> Memory a

@@ -1,4 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Interpreter.Node where
 
@@ -17,12 +18,12 @@ import Data.Foldable (foldlM)
 
 import Internal.Util
 
-import Interpreter.CompState
-
 import Memory
 import Intermediate (Cell(..), Direction(..))
 import Intermediate.CellKinds
 
+instance MonadFail (Either String) where
+  fail = Left
 
 newtype Node = Node (Memory Vector -> Memory Vector, [Int], [Int])
 
@@ -32,7 +33,7 @@ inputs (Node (_, ins, _)) = ins
 outputs :: Node -> [Int]
 outputs (Node (_, _, outs)) = outs
 
-ofCell :: Map String b -> Cell -> DesignStateBuilder (Either String) Node
+ofCell :: Map String b -> Cell -> Either String Node
 ofCell subDesignMap Cell {..} =
   case cKind of
     Buf -> do
@@ -263,11 +264,7 @@ ofCell subDesignMap Cell {..} =
       q <- validateWidth width =<< lookup' "Q" outs
       return (Node
               (sdff (V.head clkPol) (V.head rstPol) (toBitVector rstVal) (toBitVector clk) (toBitVector rst) (toBitVector d) (toBitVector q), wires clk ++ wires rst ++ wires d, wires q))
-    SubDesign name
-      | Just subdesign <- M.lookup name subDesignMap -> do
-          ind <- newSubDesign 0
-          undefined
-      | otherwise -> fail ("Unknown node: " ++ name)
+    SubDesign name -> fail ("Unknown node: " ++ name)
     _ -> fail "Unknown node"
   where
     num :: (MonadFail m) => String -> m Int

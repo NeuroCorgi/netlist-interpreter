@@ -3,11 +3,11 @@ module Test.Unit.Memory (tests) where
 import Test.Tasty
 import Test.Tasty.HUnit
 
-import Bit
 import Memory
+import Memory.Bit
 
 memoryC :: [Bit] -> Memory
-memoryC mem = Memory {memory=mem, updated=[]}
+memoryC mem = Memory{mMemory=mem, mUpMemory=mem, mUpdated=[]}
 
 testAccess :: TestTree
 testAccess =

@@ -38,7 +38,6 @@ import Data.Tuple (swap)
 import Intermediate
 import Memory
 import Interpreter.Node
-import Interpreter.CompState
 
 import Internal.Util
 
@@ -62,7 +61,7 @@ instance Show Design where
 compile :: Module -> Either String Design
 --TODO: this should not fail, as it's called 
 compile topLevel@Module{modCells=cells, modInputs=inputs, modOutputs=outputs, modNetnames=netnames} = do
-  (nodes, submem, subdes) <- state
+  nodes <- mapM (ofCell Map.empty) cells
   -- a map of wires causing updates to nodes.
   --TODO: possibly optimize lists
   -- it's not a performance bottleneck, so let it be for now
@@ -72,11 +71,10 @@ compile topLevel@Module{modCells=cells, modInputs=inputs, modOutputs=outputs, mo
     { dNodes = nodes
     , dIns = ins
     , dOuts = outs
-    , dMemory = foldl (//) (empty memorySize submem subdes) inits
+    , dMemory = foldl (//) (empty memorySize) inits
     , dUpdateMap = updateMap
     }
   where
-    state = evalDesignState $ mapM (ofCell Map.empty) cells
 
     -- how many wires to be allocated
     memorySize = modMemorySize topLevel
