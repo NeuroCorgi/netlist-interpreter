@@ -59,6 +59,11 @@ jobs:
         path: ${{ steps.setup.outputs.cabal-store }}
         key: ${{ steps.cache.outputs.cache-primary-key }}
 
+    - name: Install Yosys
+      run: |
+        sudo apt update
+        sudo apt install -y yosys
+
     - name: Build
       run: cabal build --enable-tests --enable-benchmarks all
 
