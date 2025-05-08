@@ -16,7 +16,6 @@ library
         Clash.CoSim.Yosys
         Json
         Intermediate.CellKinds
-        Interpreter.CompState
         Interpreter.Node
         Memory
         Memory.Bit
