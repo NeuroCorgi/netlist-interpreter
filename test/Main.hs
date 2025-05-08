@@ -1,16 +1,5 @@
 import Prelude
 
-import System.IO
-import System.Exit
-import System.Posix.Types
-import System.Posix.Process
-import System.Posix.IO
-
-import Control.Monad (when)
-import Control.Concurrent (threadDelay)
-
-import Foreign.C.Types
-
 import Clash.Prelude (Signal, System, sample)
 
 import Test.Tasty
