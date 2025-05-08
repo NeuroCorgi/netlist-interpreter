@@ -24,7 +24,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Set up GHC ${{ matrix.ghc-version }}
-      uses: actions/setup-haskell@v2
+      uses: haskell-actions/setup@v2
       with:
         ghc-version: ${{ matrix.ghc-version }}
         cabal-version: 'latest'
