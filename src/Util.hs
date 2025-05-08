@@ -19,6 +19,8 @@ import qualified Json
 import qualified Intermediate
 import qualified Interpreter as Compile
 
+import Paths_clash_yosys_netlist_sim
+
 infixr 9 <.>
 (<.>) :: (Functor m) => (b -> c) -> (a -> m b) -> (a -> m c)
 (<.>) f g x = f <$> g x
@@ -38,19 +40,22 @@ lookupCache :: FilePath -> [(String, String)] -> IO (Either FilePath FilePath)
 lookupCache filePath parameters = do
   let params = intercalate "," $ map (\(param, value) -> param ++ ":" ++ value) parameters
   fileHash <- withFile filePath ReadMode ((hash . (params ++) . filter (not . isSpace)) <.> hGetContents')
-  conn <- open "designs/cache.db"
+  dbPath <- getDataFileName "designs/cache.db"
+  conn <- open dbPath
   execute_ conn "CREATE TABLE IF NOT EXISTS designs (hash INTEGER PRIMARY KEY, filePath TEXT)"
   r <- query conn "SELECT filePath FROM designs WHERE hash = ?" [fileHash :: Int]
   cachePath' <- case r of
     [[ cachePath :: FilePath ]] -> return (Right cachePath)
     _ -> do
-      cachePath <- emptyTempFile "designs" (sanitize filePath ++ ".json")
+      designsDir <- getDataFileName "designs"
+      cachePath <- emptyTempFile designsDir (sanitize filePath ++ ".json")
       execute conn "INSERT INTO designs (hash, filePath) VALUES (?, ?)" (fileHash :: Int, cachePath :: String)
       return (Left cachePath)
   close conn
   return cachePath'
 
 -- | Reads design from a verilog file
+-- if not using cache, cache will not be neither read not written
 readDesign ::
   FilePath ->
   -- ^ Path to the verilog file
@@ -62,8 +67,9 @@ readDesign ::
   -- ^ Module parameters
   IO Intermediate.Module
 readDesign filePath useCache topLevelName parameters = do
-  cachedFilePath <- if useCache then lookupCache filePath parameters else
-                      Left <$> emptyTempFile "designs" (sanitize filePath ++ ".json")
+  cachedFilePath <- if useCache then lookupCache filePath parameters else do
+                      designsDir <- getDataFileName "designs"
+                      Left <$> emptyTempFile designsDir (sanitize filePath ++ ".json")
   jsonDesign <- case cachedFilePath of
     Left path -> do
       let logPath = path ++ ".log"

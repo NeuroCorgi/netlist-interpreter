@@ -1,29 +1,32 @@
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Clash.CoSim.Yosys.Internal
   ( Role(..)
   , markRolesForInputs
-  , reorder
   -- * Dependent group detection
   , CombDependent(..)
   , dependencies
   , markDependentOutputs
   , uniteDependentGroups
-  -- * Doman detection
-  , Domain
-  , markDomains
+  , splitModule
   )
 where
 
-import Control.Arrow (first)
+import Control.Arrow (first, (&&&))
+
+import Language.Haskell.TH hiding (Role)
 
 import qualified Data.List as List
+import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map (lookup, elems)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 
 import qualified Data.Vector as V
 
 import qualified Data.IntMap as IM
+import qualified Data.IntSet as IS
 import qualified Data.Set as S
 
 import Memory
@@ -37,6 +40,58 @@ data Role
   | Other
   deriving Eq
 
+-- unfoldType :: Type -> Q ([(String, Role)], [String])
+-- unfoldType (ForallT doms cxt arrow)
+--   | null cxt = unfoldType arrow
+--   | otherwise = error "expected no constraints"
+-- unfoldType typ = do
+--   let (argTys, retTy) = unsnoc $ NonEmpty.unfoldr (\case (AppT (AppT ArrowT arg) rest) -> (arg, Just rest); other -> (other, Nothing)) typ
+--   argTyNames <- arrowNames argTys
+--   retTuNames <- returnNames retTy
+--   pure (argTyNames, [])
+--   where
+--     -- annotated name, not the real name of the type
+--     typeNameRole (AppT (AppT (ConT tripleColon) (LitT (StrTyLit name))) ty)
+--       | nameBase tripleColon == ":::" = pure (name, typeRole ty)
+--       | otherwise = error "something else but triple colon encountered"
+--     typeNameRole _ = error "something completely wrong encountered"
+--
+--     typeRole (ConT tyName)
+--       | tyNameBase == "Clock" = Clock (Domain 0)
+--       | tyNameBase == "Reset" = Reset (Domain 0)
+--       | tyNameBase == "Enable" = Enable (Domain 0)
+--       where
+--         tyNameBase = nameBase tyName
+--     typeRole (AppT (ConT tyName) arg)
+--       | tyNameBase == "Clock" = Clock (Domain 1)
+--       | tyNameBase == "Reset" = Reset (Domain 1)
+--       | tyNameBase == "Enable" = Enable (Domain 1)
+--       | tyNameBase == "Signal" = Signal (Domain 0) (tyBitVectorLen arg)
+--       where
+--         tyNameBase = nameBase tyName
+--     typeRole (AppT (AppT (ConT tyName) (VarT domName)) arg)
+--       | nameBase tyName == "Signal" = Signal (Domain 1) (tyBitVectorLen arg)
+--     typeRole _ = error "something really wrong was passed"
+--
+--     tyBitVectorLen (AppT (ConT bitVectorName) (LitT (NumTyLit n)))
+--       | nameBase bitVectorName == "BitVector" = fromInteger n
+--     tyBitVectorLen _ = error "expected bitvector at some point"
+--
+--     arrowNames :: [Type] -> Q [(String, Role)]
+--     arrowNames = mapM typeNameRole
+--
+--     returnNames :: Type -> Q [(String, Role)]
+--     returnNames typ = mapM typeNameRole retTypes
+--       where
+--         retTypes = NonEmpty.toList $ NonEmpty.unfoldr (\case (AppT (TupleT _) arg) -> (arg, Nothing); (AppT rest arg) -> (arg, Just rest)) typ
+--
+--     -- taken from cabal-syntax Distribution.Utils.Generic
+--     unsnoc :: NonEmpty.NonEmpty a -> ([a], a)
+--     unsnoc (x NonEmpty.:| xs) = go x xs
+--       where
+--         go y [] = ([], x)
+--         go y (z : zs) = let (ws, w) = go z zs in (y : ws, w)
+
 markRolesForInputs :: Module -> [(Port, Role)]
 -- Multy domain design with several clock signals?
 markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
@@ -49,15 +104,20 @@ markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
 
     mark p@Port{pName=name, pBits=bits}
     -- First naive guess by the port name
-      | like clock name = (p, Clock)
-      | like reset name = (p, Reset)
-      | like enable name = (p, Enable)
+      | like clock name = (p, dClock)
+      | like reset name = (p, dReset)
+      | like enable name = (p, dEnable)
     -- Second guess by loking at internal cell inputs
-      | cs == cellClockInputs = (p, Clock)
-      | cs == cellResetInputs = (p, Reset)
-      | cs == cellEnableInputs = (p, Enable)
-      | otherwise = (p, Other)
+      | cs == cellClockInputs = (p, dClock)
+      | cs == cellResetInputs = (p, dReset)
+      | cs == cellEnableInputs = (p, dEnable)
+      | otherwise = (p, Other) -- Value (length $ pBits p))
       where cs = wires bits
+
+    dClock, dReset, dEnable :: Role
+    dClock = Clock -- (Domain 0)
+    dReset = Reset -- (Domain 0)
+    dEnable = Enable -- (Domain 0)
 
     like f name = or $ f <*> return name
 
@@ -65,13 +125,6 @@ markRolesForInputs Module{modInputs=inputs, modCells=cells} = map mark inputs
     cellClockInputs = cellInputs "CLK" cells
     cellResetInputs = cellInputs "ARST" cells
     cellEnableInputs = cellInputs "EN" cells
-
-reorder :: [(a, Role)] -> [(a, Role)]
-reorder lst = clock ++ reset ++ enable ++ rest''
-  where
-    (clock, rest) = List.partition ((== Clock) . snd) lst
-    (reset, rest') = List.partition ((== Reset) . snd) rest
-    (enable, rest'') = List.partition ((== Enable) . snd) rest'
 
 data CombDependent
   = NotDependent
@@ -93,18 +146,22 @@ dependencies NotDependent = []
 dependencies (Combinatorial s) = s
 
 uniteDependentGroups :: [(a, CombDependent)] -> [([a], CombDependent)]
-uniteDependentGroups [] = []
-uniteDependentGroups (x : xs) = go (first List.singleton x) xs
+uniteDependentGroups a = []
   where
-    go only [] = [only]
-    go (a, c) xs
-      | not $ null group = go this' rest
-      | otherwise = this' : uniteDependentGroups xs
+
+    uniteDependentGroups' :: [([a], CombDependent)] -> [(a, CombDependent)] -> [([a], CombDependent)]
+    uniteDependentGroups' a [] = a
+    uniteDependentGroups' acc (x : xs) = go (first List.singleton x) xs
       where
-        this = dependencies c
-        this' = (a ++ as, combineGroup (c : combs))
-        (group, rest) = List.partition (not . null . List.intersect this . dependencies . snd) xs
-        (as, combs) = unzip group
+        go only [] = [only]
+        go (a, c) xs
+          | not $ null group = go this' rest
+          | otherwise = uniteDependentGroups' (this' : acc) xs
+          where
+            this = dependencies c
+            this' = (a ++ as, combineGroup (c : combs))
+            (group, rest) = List.partition (not . null . List.intersect this . dependencies . snd) xs
+            (as, combs) = unzip group
 
 -- | Mark groups of outputs depending on which inputs they depend on.
 --
@@ -150,7 +207,48 @@ markDependentOutputs Module{modInputs=inputs, modOutputs=outputs, modCells=cells
         newMarksUnited = uncurry (foldl (IM.unionWith combine)) <$> uncons (V.toList newMarks)
         next = concatMap (filter (\a -> IM.lookup a marking /= (IM.lookup a =<< newMarksUnited))) nextCandidates
 
-newtype Domain = Domain Int
+data Origin
+  = ModInput String
+  | CellOut Int
+  deriving Show
 
-markDomains :: Module -> [(Port, Domain)]
-markDomains Module{modInputs=inputs, modOutputs=outputs, modCells=cells} = undefined
+data ModuleSection = ModuleSection
+  { msInputs :: S.Set String
+  , msOutput :: String
+  , msCells :: IS.IntSet
+  }
+
+emptyModuleSection :: String -> ModuleSection
+emptyModuleSection output = ModuleSection S.empty output IS.empty
+
+splitModule :: Module -> [Module]
+splitModule mod@Module{modInputs=inputs, modOutputs=outputs, modCells=cells} = mods
+  where
+    sourceOrigin :: IM.IntMap Origin
+    sourceOrigin = IM.fromList (inputsOrigin ++ cellOutputsOrigin)
+
+    inputsOrigin = concatMap ( uncurry (\s-> map (, ModInput s)) . (pName &&& wires . pBits)) inputs
+    cellOutputsOrigin = concat $ V.toList $ V.imap (\i -> map (, CellOut i) . concatMap wires . Map.elems . cOutputs) cells
+
+    mods = map (\Port{pName=name, pBits=bits} -> sectionToModule $ singleSection IS.empty (emptyModuleSection name) $ IS.fromList $ wires bits) outputs
+
+    singleSection :: IS.IntSet -> ModuleSection -> IS.IntSet -> ModuleSection
+    singleSection visited modSect outs
+      | outs == IS.empty = modSect
+      | otherwise = singleSection newVisited modSect' newOuts
+      where
+        (modSect', sources) = List.mapAccumL
+          (\sect out ->
+             case sourceOrigin IM.! out of
+               CellOut i -> (sect{msCells=IS.insert i (msCells sect)}, Just (concatMap wires . Map.elems . cInputs $ cells V.! i))
+               ModInput s -> (sect{msInputs=S.insert s (msInputs sect)}, Nothing)
+          ) modSect $ IS.toList outs
+
+        newVisited = IS.union visited outs
+        newOuts = IS.fromList $ concatMap (filter (not . (`IS.member` visited))) (catMaybes sources)
+
+    sectionToModule :: ModuleSection -> Module
+    sectionToModule ModuleSection{msInputs, msOutput, msCells} =
+      mod{ modInputs = filter ((`S.member` msInputs) . pName) inputs
+         , modOutputs = filter ((== msOutput) . pName) outputs
+         , modCells = V.fromList $ map (cells V.!) $ IS.elems msCells }
