@@ -16,6 +16,7 @@ module Memory
     empty,
     clearUpdated,
     BitVector(..),
+    ToBitVector(..),
     BVE(..),
     Bit(..),
     bit,

@@ -8,6 +8,7 @@ module Clash.CoSim.Yosys.Util
   , unzipFN
   , unzipN
   , accs
+  , mp
   )
 where
 
@@ -25,6 +26,14 @@ import GHC.Natural (naturalToInteger)
 import Memory (Bit(..))
 
 import Internal.Util
+
+-- | Tuple map, applies the same function to every element of a tuple
+-- Does not make single elements tuples
+mp :: Int -> Name -> Q Exp
+mp 1 m = varE m
+mp n m = do
+  names <- mapM (const (newName "a")) [1..n]
+  [| \ $(tupP $ map varP names) ->  $(tupE $ map (\a -> [| $(varE m) $(varE a) |]) names) |]
 
 accs :: Int -> Int -> Q Exp
 accs n m = do

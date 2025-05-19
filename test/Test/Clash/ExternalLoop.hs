@@ -1,14 +1,7 @@
 module Test.Clash.ExternalLoop where
 
-import Clash.Prelude hiding (fromList)
+import Clash.Prelude
 import Clash.CoSim.Yosys
-
-import Interpreter hiding (compile)
-import Util
-import Memory hiding (BitVector)
-import Intermediate
-import Intermediate.CellKinds
-import Data.Map (fromList)
 
 -- external to haskell, external verilog file
 external :: Int -> Int -> (Int, Int)

@@ -14,6 +14,7 @@ library
         Interpreter
         Intermediate
         Clash.CoSim.Yosys
+        Clash.CoSim.Yosys.Inst
         Json
         Intermediate.CellKinds
         Interpreter.Node
@@ -32,6 +33,7 @@ library
     build-depends:
         base,
         containers,
+        unordered-containers,
         aeson,
         text,
         bytestring,
@@ -40,23 +42,81 @@ library
         scientific,
         temporary,
         process,
+        lens,
+        mtl,
+        pretty-show,
+        string-interpolate,
         template-haskell,
         clash-prelude >= 1.8.0,
+        clash-lib,
         sqlite-simple,
         hashable,
         transformers
 
--- test-suite netlist-sim-unittest
---     type:             exitcode-stdio-1.0
---     main-is:          Test.hs
---     hs-source-dirs:   test
---     default-language: Haskell2010
---     ghc-options:      -Wall
---     build-depends:
---         base,
---         tasty,
---         tasty-hunit,
---         clash-yosys-netlist-sim
+executable clash
+  main-is: bin/Clash.hs
+  default-language: Haskell2010
+  Build-Depends:
+        base,
+        clash-ghc,
+        ghc-typelits-natnormalise,
+        ghc-typelits-extra,
+        ghc-typelits-knownnat,
+        inttest-testcases
+  -- ghc-options: -fexpose-all-unfoldings -fno-worker-wrapper
+  if !os(Windows)
+    ghc-options: -dynamic
+
+library inttest-testcases
+    hs-source-dirs: test
+    default-language: Haskell2010
+    exposed-modules:
+        Test.Clash.Fibonacci
+        Test.Clash.LotsOfState
+        Test.Clash.BlockRam
+        Test.Clash.T1669
+        Test.Clash.ExternalLoop
+        Test.Clash.ExternalLoop2
+        Test.Clash.ExternalLoop3
+    ghc-options:
+        -fplugin GHC.TypeLits.KnownNat.Solver
+        -fplugin GHC.TypeLits.Normalise
+        -fplugin GHC.TypeLits.Extra.Solver
+        -fexpose-all-unfoldings
+        -fno-worker-wrapper
+    default-extensions:
+        DataKinds
+        ViewPatterns
+        TemplateHaskell
+        NoImplicitPrelude
+        TypeApplications
+        ScopedTypeVariables
+        FlexibleInstances
+    other-modules:
+        Clash.Explicit.Testbench.Extra
+    build-depends:
+        base,
+        string-interpolate,
+        clash-prelude,
+        clash-yosys-netlist-sim,
+        ghc-typelits-natnormalise,
+        ghc-typelits-extra,
+        ghc-typelits-knownnat
+
+test-suite netlist-sim-unittest
+    type:             exitcode-stdio-1.0
+    main-is:          Test.hs
+    hs-source-dirs:   test
+    default-language: Haskell2010
+    ghc-options:      -Wall
+    build-depends:
+        base,
+        tasty,
+        tasty-hunit,
+        tasty-hedgehog,
+        hedgehog,
+        vector,
+        clash-yosys-netlist-sim
 
 test-suite netlist-sim-inttest
     type:             exitcode-stdio-1.0
@@ -66,13 +126,6 @@ test-suite netlist-sim-inttest
     ghc-options:
         -Wall -fplugin GHC.TypeLits.KnownNat.Solver -fplugin GHC.TypeLits.Normalise -fplugin GHC.TypeLits.Extra.Solver
     other-modules:
-        Test.Clash.Fibonacci
-        Test.Clash.LotsOfState
-        Test.Clash.BlockRam
-        Test.Clash.T1669
-        Test.Clash.ExternalLoop
-        Test.Clash.ExternalLoop2
-        Test.Clash.ExternalLoop3
         Clash.Explicit.Testbench.Extra
     default-extensions:
         DataKinds
@@ -89,6 +142,7 @@ test-suite netlist-sim-inttest
         clash-prelude,
         containers,
         clash-yosys-netlist-sim,
+        inttest-testcases,
         ghc-typelits-natnormalise,
         ghc-typelits-extra,
         ghc-typelits-knownnat

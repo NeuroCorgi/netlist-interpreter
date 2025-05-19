@@ -8,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveLift #-}
+{-# LANGUAGE DataKinds #-}
 
 {-# OPTIONS_GHC -Wno-gadt-mono-local-binds #-}
 
@@ -45,7 +46,7 @@ import Data.Int (Int64)
 import Data.Coerce (coerce)
 
 import Data.Maybe (fromJust, mapMaybe, catMaybes)
-import qualified Data.Map as Map (Map, fromList, empty, (!))
+import qualified Data.Map as Map
 import qualified Data.List as List
 
 import Data.Vector (Vector)
@@ -54,7 +55,7 @@ import qualified Data.Vector as V (singleton)
 import Data.Function (on)
 
 import Clash.Annotations.Primitive (PrimitiveGuard(HasBlackBox))
-import Clash.Prelude (pack)
+import Clash.Prelude (pack, ResetPolarity(ActiveHigh))
 import Clash.Signal.Internal (Signal((:-)), Femtoseconds(..), SDomainConfiguration(..), knownDomain)
 import qualified Clash.Signal.Internal as CLK (Clock(..))
 import qualified Clash.Signal (KnownDomain, Signal, Clock, Reset, Enable, fromEnable, fromList, unsafeToActiveHigh, sample)
@@ -69,6 +70,7 @@ import qualified Util as U
 
 import Clash.CoSim.Yosys.Internal
 import Clash.CoSim.Yosys.Util
+import Clash.CoSim.Yosys.Inst
 
 -- import Debug.Trace
 
@@ -157,6 +159,9 @@ mapLookup = (Map.!)
 maybeFromJust :: Maybe a -> a
 maybeFromJust = fromJust
 ---
+
+mkDomainName :: Int -> Name
+mkDomainName n = mkName ("dom" ++ show n)
 
 data ModuleOptions = ModuleOptions
   { topEntityName :: String
@@ -253,58 +258,57 @@ externalComponent (argTyNameDom, retTyNameDom) filePath ModuleOptions{topEntityN
       (retTyNames, retDoms) = map fst &&& Map.fromList $ map (, 0) retTyNameDom
       specialSignalNames = map (I.pName . fst) $ filter ((== Clock) . snd) markedInputs
       mods = splitModule topLevel
-      reorderedModules = reorderModsTo retTyNames mods
+      reorderedModules = reorderTo (I.pName . head . I.modOutputs) retTyNames mods
 
-      reorderedInputs = reorderTo argTyNames markedInputs
-      reorderedOutputs = reorderTo retTyNames markedOutputs
+      reorderPorts = reorderTo (I.pName . fst)
+      reorderedInputs = reorderPorts argTyNames markedInputs
+      reorderedOutputs = reorderPorts retTyNames markedOutputs
 
-  name <- newName $ I.modName topLevel
-
-  -- noinlineAnn <- pragInlD name NoInline FunLike AllPhases
-  -- hasBlackBoxAnn <- pragAnnD (ValueAnnotation name) [| (HasBlackBox [] ()) |]
+  let name = mkName $ I.modName topLevel
 
   -- If there is something that resembles clock signal, then consider the design synchronous
   case maybeClockName of
     Just _ -> do
-      let
-        dom = mkName "dom"
-        (inputPatterns, acss, argTys) = convertInputs (Just dom) reorderedInputs
-        outTy = convertOutputs (Just dom) reorderedOutputs
-
-      (inputPorts, _, portsMap) <- makeIOPortsMap argDoms retDoms acss reorderedInputs reorderedOutputs
-      let clockInputPorts = List.sortBy (compare `on` portDomain) $ filter ((== Clock) . portRole) inputPorts
+      inputPorts <- mapM (convertPort (Just argDoms)) reorderedInputs
+      outputPorts <- mapM (convertPort (Just retDoms)) reorderedOutputs
 
       clockEvents <- newName "clockTicks"
       clockNames <- newName "clockNames"
+      goInst <- newName "goInst"
+
+      let
+        portsMap = Map.fromList $ map (\port@PortTH{portName} -> (portName, port)) $ inputPorts ++ outputPorts
+        clockInputPorts = List.sortBy (compare `on` portDomain) $ filter ((== Clock) . portRole) inputPorts
+        instB = withInstNormalB [| $(mp (length outputPorts) 'unPort) $(varE goInst) |]
+
       dec <- funD name
-        [ clause inputPatterns (normalB $ tupE' $ map (synchModuleE clockEvents clockNames portsMap) reorderedModules)
+        [ clause (map unwrapPattern inputPorts) (instB $ tupE' $ map (synchModuleE clockEvents clockNames portsMap) reorderedModules)
           [ valD (varP clockEvents) (normalB $ foldl appE [| clockTicks |] $ map (varE . headAccessor) clockInputPorts ) []
           , valD (varP clockNames) (normalB $ listE $ map (liftString . portName) clockInputPorts) []
+          -- Synthesis
+          , sigD goInst (tupT' $ map portTHtoInstPortT outputPorts)
+          , valD (varP goInst) (normalB $ (foldl appE [| inst (instConfig $(liftString topLevelName)) |] $ map portTHtoInstPortE inputPorts)) []
           ]
         ]
-      sig <- sigD name [t| Clash.Signal.KnownDomain $(varT dom) => $(makeArrow argTys outTy) |]
+      let doms = map mkDomainName $ List.nub $ Map.elems $ Map.union argDoms retDoms
+      cxt <- mapM (\d -> [t| Clash.Signal.KnownDomain $(varT d) |]) doms
+      sig <- sigD name $ forallT (map plainTV doms) (pure cxt) (makeArrow (map portSignal inputPorts) (tupT' $ map portSignal outputPorts))
       return [sig, dec]
 
     _ -> do
-      let (inputPatterns, acss, argTys) = convertInputs Nothing $ reorderedInputs
-          outTy = convertOutputs Nothing reorderedOutputs
+      inputPorts <- mapM (convertPort Nothing) reorderedInputs
+      outputPorts <- mapM (convertPort Nothing) reorderedOutputs
 
-      (_, _, portsMap) <- makeIOPortsMap argDoms retDoms acss reorderedInputs reorderedOutputs
+      let portsMap = Map.fromList $ map (\port@PortTH{portName} -> (portName, port)) $ inputPorts ++ outputPorts
+          instB = withInstNormalB [| error "Synthesis of asynchrnous designs is not supported" |]
 
-      dec <- funD name [ clause inputPatterns (normalB $ tupE' $ map (asyncModuleE portsMap) reorderedModules) [] ]
-      sig <- sigD name (makeArrow argTys outTy)
+      dec <- funD name [ clause (map unwrapPattern inputPorts) (instB $ tupE' $ map (asyncModuleE portsMap) reorderedModules) [] ]
+      sig <- sigD name (makeArrow (map portType inputPorts) (tupT' $ map portType outputPorts))
       return [sig, dec]
   where
-    makeIOPortsMap argDoms retDoms acss inputs outputs = do
-      inputPorts <- zipWithM
-        (\(I.pName -> name, role) (sigHead, sigTail) -> do
-                portSignal <- newName name
-                pure $ PortTH name role (argDoms Map.! name) DependentPort portSignal sigHead sigTail)
-            inputs acss
-      -- output ports need no accessor names
-      let outputPorts = map (\(I.pName -> name, role) -> PortTH name role (retDoms Map.! name) DependentPort (mkName "") (mkName "") (mkName "")) outputs
-          portsMap = Map.fromList $ map (portName &&& id) (inputPorts ++ outputPorts)
-      pure (inputPorts, outputPorts, portsMap)
+
+    tupT' [single] = single
+    tupT' multi = foldl appT (tupleT (length multi)) multi
 
     tupE' [single] = single
     tupE' multi = tupE multi
@@ -352,15 +356,43 @@ data PortTH = PortTH
   { portName       :: String
   , portRole       :: Role
   , portDomain     :: Int
+  , portType       :: Q Type
   , portDependency :: PortDependency
+  , rawSignalName  :: Name
   , signalName     :: Name
   , headAccessor   :: Name
   , tailAccessor   :: Name
   }
 
+portSignal :: PortTH -> Q Type
+portSignal PortTH{portDomain, portType, portRole=Other} = [t| Clash.Signal.Signal $(varT $ mkDomainName portDomain) $portType |]
+portSignal PortTH{portDomain, portType} = portType
+
+unwrapPattern :: PortTH -> Q Pat
+unwrapPattern PortTH{portRole=Clock, ..} = asP rawSignalName $ varP signalName
+unwrapPattern PortTH{portRole=Reset, ..} = asP rawSignalName [p| (fmap pack . Clash.Signal.unsafeToActiveHigh -> $(varP signalName)) |]
+unwrapPattern PortTH{portRole=Enable, ..} = asP rawSignalName [p| (fmap pack . Clash.Signal.fromEnable -> $(varP signalName)) |]
+unwrapPattern PortTH{portRole=Other, ..} = asP rawSignalName $ varP signalName
+
 destructivePattern :: PortTH -> Q Pat
 destructivePattern PortTH{ signalName, headAccessor, tailAccessor} =
   asP signalName [p| ~($(varP headAccessor) :- $(varP tailAccessor)) |]
+
+portTHtoInstPortE :: PortTH -> Q Exp
+portTHtoInstPortE PortTH{..}
+  | portRole == Clock = [| (ClockPort @($portNameS) $(varE rawSignalName)) |]
+  | portRole == Reset = [| (ResetPort @($portNameS) @ActiveHigh $(varE rawSignalName)) |]
+  | otherwise = [| (Port @($portNameS) $(varE signalName)) |]
+  where
+    portNameS :: Q Type
+    portNameS = litT $ strTyLit portName
+
+portTHtoInstPortT :: PortTH -> Q Type
+portTHtoInstPortT PortTH{..}
+  | portRole == Other = [t| (Port $(litT $ strTyLit portName) $(varT (mkDomainName portDomain)) $(portType)) |]
+  | otherwise =
+      -- Output port cannot have any other role but @Other@
+      error "unexpected output port role"
 
 synchModuleE :: Name -> Name -> Map.Map String PortTH -> I.Module -> ExpQ
 synchModuleE clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=inputs, I.modOutputs=outputs} = do
@@ -423,7 +455,7 @@ synchModuleE clockEventsName clockNameMap portMap mod@I.Module{I.modInputs=input
       [ initState
       , goInit
       , goCycle ]
-      (foldl appE [| $(varE initFunc) $(varE initName)  |] $ map (varE . headAccessor) portInputs)
+      (foldl appE [| $(varE initFunc) $(varE initName)  |] $ map (varE . signalName) portInputs)
 
   [| Clash.Signal.fromList $ map fst $ filter ((($(lift $ portDomain output), Falling) `elem`) . snd) $ $signalBody |]
   where
@@ -470,73 +502,54 @@ makeMapping currentEventName inputs =
 makeUnmapping :: Name -> String -> ExpQ
 makeUnmapping mapName portName = [| fromVectorBit (mapLookup $(varE mapName) $(liftString portName)) |]
 
-reorderTo :: [String] -> [(I.Port, a)] -> [(I.Port, a)]
-reorderTo dest orig = map (orig List.!!) ind
+reorderTo :: Eq a => (b -> a) -> [a] -> [b] -> [b]
+reorderTo f dst orig = map (orig List.!!) ind
   where
-    origNames = map (I.pName . fst) orig
-    ind = mapMaybe (`List.elemIndex` origNames) dest
-
-reorderModsTo :: [String] -> [I.Module] -> [I.Module]
-reorderModsTo dest orig = map (orig List.!!) ind
-  where
-    origOuts = map (I.pName . head . I.modOutputs) orig
-    ind = mapMaybe (`List.elemIndex` origOuts) dest
+    origInd = map f orig
+    ind = mapMaybe (`List.elemIndex` origInd) dst
 
 convertPort ::
-  Maybe Name ->
-  -- ^ Name of a domain if a port is a part of a synchronous design
+  Maybe (Map.Map String Int) ->
+  -- ^ Map of domain indexes, Nothing means no mapping, no clock, asynchronous design
   (I.Port, Role) ->
   -- ^ Port with its attached role
-  (Q Pat, (Name, Name), Q Type)
-  -- ^ Pattern to match a signal (or correctly deconstruct it into a signal in case of clock, reset, or enable),
-  --   Names of a head and a continuation of the signal
-  --   Type of the signal
+  Q PortTH
+  -- ^ Record with all later usefull information
 
--- Clock pattern is useless as its dropped right after
-convertPort (Just d) (I.Port{..}, Clock) = (varP n, (acs, acs), [t| Clash.Signal.Clock $(varT d) |])
-  where acs = n
-        n = mkName pName
-convertPort (Just d) (I.Port{..}, Reset) =
-  ([p| (fmap pack . Clash.Signal.unsafeToActiveHigh -> $(varP rstName)) |],
-   (rstName, rstSig),
-   [t| Clash.Signal.Reset $(varT d) |])
-  where rstName = mkName pName
-        rstSig = mkName (pName ++ "_tail")
-convertPort (Just d) (I.Port{..}, Enable) =
-  ([p| (fmap pack . Clash.Signal.fromEnable -> $(varP enName)) |],
-    (enName, enSig),
-    [t| Clash.Signal.Enable $(varT d) |])
-  where enName = mkName pName
-        enSig = mkName (pName ++ "_tail")
-convertPort dom ((I.Port portName (length -> bitSize)), _)
-  | Just d <- dom = (varP sigHead, (sigHead, sigTail), bv2signal d)
-  | otherwise = (varP sigHead, (sigHead, sigHead), bv2type)
+convertPort (Just domainMap) (I.Port{..}, Clock)
+  | Just d <- Map.lookup pName domainMap = do
+      rawName <- newName pName
+      signalName <- newName pName
+      pure $ PortTH pName Clock d [t| Clash.Signal.Clock $(varT $ mkDomainName d) |] NotDependentPort rawName signalName signalName signalName
+  | otherwise = error $ "No domain index was given to the clock port \"" ++ pName ++ "\""
+convertPort (Just domainMap) (I.Port{..}, Reset)
+  | Just d <- Map.lookup pName domainMap = do
+      rawName <- newName pName
+      signalName <- newName pName
+      headName <- newName (pName ++ "_head")
+      tailName <- newName (pName ++ "_tail")
+      pure $ PortTH pName Reset d [t| Clash.Signal.Reset $(varT $ mkDomainName d) |] NotDependentPort rawName signalName headName tailName
+  | otherwise = error $ "No domain index was given to the reset port \"" ++ pName ++ "\""
+convertPort (Just domainMap) (I.Port{..}, Enable)
+  | Just d <- Map.lookup pName domainMap = do
+      rawName <- newName pName
+      signalName <- newName pName
+      headName <- newName (pName ++ "_head")
+      tailName <- newName (pName ++ "_tail")
+      pure $ PortTH pName Enable d [t| Clash.Signal.Enable $(varT $ mkDomainName d) |] NotDependentPort rawName signalName headName tailName
+  | otherwise = error $ "No domain index was given to the enable port \"" ++ pName ++ "\""
+convertPort domainMap ((I.Port pName (length -> bitSize)), _)
+  | Just domainMap' <- domainMap
+  , Just d <- Map.lookup pName domainMap' = do
+      rawName <- newName pName
+      signalName <- newName pName
+      headName <- newName (pName ++ "_head")
+      tailName <- newName (pName ++ "_tail")
+      pure $ PortTH pName Other d bv2type DependentPort rawName signalName headName tailName
+  | Just domainMap' <- domainMap = error $ "No domain index was given to the port \"" ++ pName ++ "\""
+  | otherwise = do
+      rawName <- newName pName
+      signalName <- newName pName
+      pure $ PortTH pName Other 0 bv2type DependentPort rawName signalName signalName signalName
   where
-    sigHead = mkName portName
-    sigTail = mkName (portName ++ "_tail")
-
     bv2type = [t| Clash.Sized.BitVector.BitVector $(fromIntegral bitSize) |]
-    bv2signal d = [t| Clash.Signal.Signal $(varT d) $bv2type |]
-
-convertPorts :: Maybe Name -> [(I.Port, Role)] -> [(Q Pat, (Name, Name), Q Type)]
-convertPorts dom = map (convertPort dom)
-
-convertInputs :: Maybe Name -> [(I.Port, Role)] -> ([Q Pat], [(Name, Name)], [Q Type])
-convertInputs dom ins = (names, acss, args)
-  where
-    (names, acss, args) = unzip3 $ convertPorts dom ins
-    -- pat = map (\n -> (n, mkName n)) names
-
-convertOutputs :: Maybe Name -> [(I.Port, Role)] -> Q Type
-convertOutputs dom outs = ty
-  -- | Just dom <- dom = [t| Clash.Signal.Signal $(varT dom) $ty |]
-  -- | otherwise = ty
-  where
-    -- Discard patterns and accessor names as they are not needed for the output
-    ress = map (\(_, (_, _), c) -> c) $ convertPorts dom outs
-
-    -- If there are multiple return values, construct a tuple
-    ty = case ress of
-      [] -> tupleT 0 -- unit type
-      [single] -> single
-      multiple -> foldl appT (tupleT (length multiple)) multiple
